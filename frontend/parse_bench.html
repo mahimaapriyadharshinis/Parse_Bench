@@ -212,6 +212,31 @@
   .empty-state .big{ font-size:13px; font-weight:600; font-family:"IBM Plex Mono",monospace; }
 
   footer{ margin-top:24px; text-align:center; font-size:11px; color:var(--text-faint); font-family:"IBM Plex Mono",monospace; }
+
+  /* ---- step-by-step walkthrough ---- */
+  .walkthrough{ display:flex; flex-direction:column; gap:12px; }
+  .wt-controls{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  .wt-btn{ background:var(--panel); border:1px solid var(--border); color:var(--text); width:30px; height:30px; border-radius:5px; cursor:pointer; font-size:14px; display:flex; align-items:center; justify-content:center; font-family:"IBM Plex Mono",monospace; }
+  .wt-btn:hover:not(:disabled){ border-color:var(--text-dim); }
+  .wt-btn:disabled{ opacity:.35; cursor:default; }
+  .wt-btn.primary{ width:auto; padding:0 14px; background:var(--invert-bg); color:var(--invert-text); border:1px solid var(--invert-bg); font-weight:600; font-size:12px; }
+  .wt-btn.primary:hover{ opacity:.82; }
+  .wt-scrub{ flex:1; min-width:120px; accent-color:var(--text); }
+  .wt-count{ font-family:"IBM Plex Mono",monospace; font-size:11.5px; color:var(--text-faint); min-width:56px; text-align:right; }
+  .wt-speed{ background:var(--panel); border:1px solid var(--border); color:var(--text-dim); border-radius:5px; padding:5px 8px; font-size:11.5px; font-family:"IBM Plex Mono",monospace; }
+  .wt-tokens{ display:flex; flex-wrap:wrap; gap:4px; padding:10px; background:var(--mono-bg); border-radius:6px; border:1px solid var(--border-soft); font-family:"IBM Plex Mono",monospace; font-size:12.5px; }
+  .wt-tok{ padding:3px 6px; border-radius:3px; color:var(--text-faint); }
+  .wt-tok.current{ background:var(--invert-bg); color:var(--invert-text); font-weight:600; }
+  .wt-body{ display:grid; grid-template-columns:1fr 260px; gap:12px; align-items:start; }
+  @media (max-width:760px){ .wt-body{ grid-template-columns:1fr; } }
+  .wt-tree-col{ display:flex; flex-direction:column; gap:8px; min-width:0; }
+  .wt-tree{ height:min(56vh, 500px); }
+  .wt-log{ background:var(--mono-bg); border:1px solid var(--border-soft); border-radius:6px; padding:12px 14px; font-family:"IBM Plex Mono",monospace; font-size:11.5px; line-height:1.8; max-height:500px; overflow-y:auto; }
+  .wt-log-line{ color:var(--text-dim); }
+  .wt-log-line.ok{ color:var(--success); }
+  .wt-log-line.bad{ color:var(--error); }
+  .wt-log-line.warn{ color:var(--text); font-weight:600; }
+  .wt-log-line.hint{ color:var(--text-faint); font-style:italic; }
 </style>
 </head>
 <body>
@@ -272,13 +297,47 @@
     <!-- OUTPUT PANEL -->
     <div class="panel">
       <div class="tabbar" role="tablist">
-        <button class="tabbtn active" data-tab="tree" role="tab">Parse tree</button>
+        <button class="tabbtn active" data-tab="walkthrough" role="tab">Step by step</button>
+        <button class="tabbtn" data-tab="tree" role="tab">Parse tree</button>
         <button class="tabbtn" data-tab="tokens" role="tab">Tokens</button>
         <button class="tabbtn" data-tab="grammar" role="tab">Grammar &amp; LL(1)</button>
         <button class="tabbtn" data-tab="errors" role="tab">Errors</button>
       </div>
 
-      <div class="tabpane active" id="pane-tree">
+      <div class="tabpane active" id="pane-walkthrough">
+        <div class="walkthrough">
+          <div class="wt-controls">
+            <button class="wt-btn" id="wt-restart" title="Restart" aria-label="Restart">&#8634;</button>
+            <button class="wt-btn" id="wt-back" aria-label="Step back">&#9668;</button>
+            <button class="wt-btn primary" id="wt-play" aria-label="Play">Play</button>
+            <button class="wt-btn" id="wt-forward" aria-label="Step forward">&#9658;</button>
+            <input class="wt-scrub" type="range" id="wt-scrub" min="0" max="0" value="0">
+            <span class="wt-count" id="wt-count">0 / 0</span>
+            <select class="wt-speed" id="wt-speed">
+              <option value="900">Slow</option>
+              <option value="450" selected>Normal</option>
+              <option value="150">Fast</option>
+            </select>
+          </div>
+
+          <div class="wt-tokens" id="wt-tokens"></div>
+
+          <div class="wt-body">
+            <div class="wt-tree-col">
+              <div class="zoom-controls">
+                <button id="wt-zoom-out" aria-label="Zoom out">&minus;</button>
+                <button id="wt-zoom-fit" class="fit-btn" title="Fit whole tree in view" aria-label="Fit to view">Fit</button>
+                <button id="wt-zoom-in" aria-label="Zoom in">+</button>
+                <span class="zoom-pct" id="wt-zoom-pct">100%</span>
+              </div>
+              <div class="tree-scroll wt-tree" id="wt-tree-scroll"><div id="wt-tree-host"></div></div>
+            </div>
+            <div class="wt-log" id="wt-log"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tabpane" id="pane-tree">
         <div class="legend">
           <div class="legend-item"><span class="legend-swatch" style="background:var(--panel-2);border:1px solid var(--border)"></span>non-terminal</div>
           <div class="legend-item"><span class="legend-swatch" style="background:var(--panel);border:1px solid var(--syn-keyword)"></span>keyword</div>
@@ -495,20 +554,34 @@ class ParseError extends Error {
     this.token = token; this.expectedDesc = expectedDesc;
   }
 }
-function node(label, children, isError) { return { label, children: children || [], isError: !!isError }; }
+function node(label, children, isError) { return { label, children: children || [], isError: !!isError, _id: -1 }; }
 
 class Parser {
-  constructor(tokens) { this.tokens = tokens; this.pos = 0; this.errors = []; }
+  constructor(tokens) {
+    this.tokens = tokens; this.pos = 0; this.errors = [];
+    this.trace = []; this._nextId = 0;
+  }
   current() { return this.tokens[this.pos]; }
   check(t) { return this.current().type === t; }
   advance() { const tok = this.tokens[this.pos]; if (tok.type !== "EOF") this.pos++; return tok; }
-  leaf(tok) { const n = node(tok.lexeme || tok.type); n.token = tok; return n; }
   report(err) { this.errors.push(err.message); }
+
+  makeNode(label, children, isError) { const n = node(label, children, isError); n._id = this._nextId++; return n; }
+  finish(n) { this.trace.push({ type: "match", nodeId: n._id, label: n.label, pos: this.pos }); return n; }
+  leaf(tok) {
+    const n = this.makeNode(tok.lexeme || tok.type);
+    n.token = tok;
+    this.trace.push({ type: "consume", nodeId: n._id, token: tok, pos: this.pos });
+    return n;
+  }
 
   expect(ttype) {
     if (this.check(ttype)) return this.leaf(this.advance());
-    this.report(new ParseError(this.current(), friendlyType(ttype), ttype));
-    return node(`<missing ${ttype}>`, [], true);
+    const err = new ParseError(this.current(), friendlyType(ttype), ttype);
+    this.report(err);
+    const n = this.makeNode(`<missing ${ttype}>`, [], true);
+    this.trace.push({ type: "error", nodeId: n._id, message: err.message, pos: this.pos });
+    return n;
   }
 
   /** Panic-mode recovery: skip tokens until one in FIRST(statement) is
@@ -519,24 +592,40 @@ class Parser {
    * and this loops forever. */
   synchronize(terminator) {
     while (!this.check("EOF")) {
-      if (this.check("SEMI")) { this.advance(); return; }
+      if (this.check("SEMI")) {
+        const t = this.advance();
+        this.trace.push({ type: "resync", token: t, pos: this.pos });
+        return;
+      }
       if (this.check("RBRACE")) {
-        if (this.current().type === terminator) return;
+        if (this.current().type === terminator) {
+          this.trace.push({ type: "resync", token: this.current(), pos: this.pos });
+          return;
+        }
+        this.trace.push({ type: "skip", token: this.current(), pos: this.pos });
         this.advance();
         continue;
       }
-      if (FIRST_STATEMENT.has(this.current().type)) return;
+      if (FIRST_STATEMENT.has(this.current().type)) {
+        this.trace.push({ type: "resync", token: this.current(), pos: this.pos });
+        return;
+      }
+      this.trace.push({ type: "skip", token: this.current(), pos: this.pos });
       this.advance();
     }
+    this.trace.push({ type: "resync", token: this.current(), pos: this.pos });
   }
 
-  parse() { const n = node("program"); this.parseStmtSequence(n, "EOF"); return n; }
+  parse() { const n = this.makeNode("program"); this.parseStmtSequence(n, "EOF"); return this.finish(n); }
 
   parseStmtSequence(n, terminator) {
     while (!this.check(terminator) && !this.check("EOF")) {
       if (!FIRST_STATEMENT.has(this.current().type)) {
-        this.report(new ParseError(this.current(), "start of statement"));
-        n.children.push(node(`<skipped '${this.current().lexeme}'>`, [], true));
+        const err = new ParseError(this.current(), "start of statement");
+        this.report(err);
+        const skipped = this.makeNode(`<skipped '${this.current().lexeme}'>`, [], true);
+        this.trace.push({ type: "error", nodeId: skipped._id, message: err.message, pos: this.pos });
+        n.children.push(skipped);
         this.synchronize(terminator);
         continue;
       }
@@ -544,7 +633,9 @@ class Parser {
       catch (err) {
         if (!(err instanceof ParseError)) throw err;
         this.report(err);
-        n.children.push(node(`<error: ${err.message}>`, [], true));
+        const errNode = this.makeNode(`<error: ${err.message}>`, [], true);
+        this.trace.push({ type: "error", nodeId: errNode._id, message: err.message, pos: this.pos });
+        n.children.push(errNode);
         this.synchronize(terminator);
       }
     }
@@ -562,103 +653,103 @@ class Parser {
   }
 
   parseDeclStmt() {
-    const n = node("declStmt");
+    const n = this.makeNode("declStmt");
     n.children.push(this.leaf(this.advance()));
     n.children.push(this.expect("ID"));
     n.children.push(this.expect("SEMI"));
-    return n;
+    return this.finish(n);
   }
   parseAssignStmt() {
-    const n = node("assignStmt");
+    const n = this.makeNode("assignStmt");
     n.children.push(this.leaf(this.advance()));
     n.children.push(this.expect("ASSIGN"));
     n.children.push(this.parseExpr());
     n.children.push(this.expect("SEMI"));
-    return n;
+    return this.finish(n);
   }
   parseIfStmt() {
-    const n = node("ifStmt");
+    const n = this.makeNode("ifStmt");
     n.children.push(this.leaf(this.advance()));
     n.children.push(this.expect("LPAREN"));
     n.children.push(this.parseCond());
     n.children.push(this.expect("RPAREN"));
     n.children.push(this.parseBlock());
     n.children.push(this.parseElsePart());
-    return n;
+    return this.finish(n);
   }
   parseElsePart() {
     if (this.check("ELSE")) {
-      const n = node("elsePart");
+      const n = this.makeNode("elsePart");
       n.children.push(this.leaf(this.advance()));
       n.children.push(this.parseBlock());
-      return n;
+      return this.finish(n);
     }
-    return node("elsePart(ε)");
+    return this.finish(this.makeNode("elsePart(ε)"));
   }
   parseWhileStmt() {
-    const n = node("whileStmt");
+    const n = this.makeNode("whileStmt");
     n.children.push(this.leaf(this.advance()));
     n.children.push(this.expect("LPAREN"));
     n.children.push(this.parseCond());
     n.children.push(this.expect("RPAREN"));
     n.children.push(this.parseBlock());
-    return n;
+    return this.finish(n);
   }
   parseBlock() {
-    const n = node("block");
+    const n = this.makeNode("block");
     n.children.push(this.expect("LBRACE"));
     this.parseStmtSequence(n, "RBRACE");
     n.children.push(this.expect("RBRACE"));
-    return n;
+    return this.finish(n);
   }
   parsePrintStmt() {
-    const n = node("printStmt");
+    const n = this.makeNode("printStmt");
     n.children.push(this.leaf(this.advance()));
     n.children.push(this.expect("LPAREN"));
     n.children.push(this.parseExpr());
     n.children.push(this.expect("RPAREN"));
     n.children.push(this.expect("SEMI"));
-    return n;
+    return this.finish(n);
   }
   parseCond() {
-    const n = node("cond");
+    const n = this.makeNode("cond");
     n.children.push(this.parseExpr());
     n.children.push(this.parseRelop());
     n.children.push(this.parseExpr());
-    return n;
+    return this.finish(n);
   }
   parseRelop() {
-    if (RELOPS.has(this.current().type)) return node("relop", [this.leaf(this.advance())]);
+    if (RELOPS.has(this.current().type)) return this.finish(this.makeNode("relop", [this.leaf(this.advance())]));
     throw new ParseError(this.current(), "relational operator (< > <= >= == !=)");
   }
   parseExpr() {
-    const n = node("expr");
+    const n = this.makeNode("expr");
     n.children.push(this.parseTerm());
     while (this.current().type === "PLUS" || this.current().type === "MINUS") {
       n.children.push(this.leaf(this.advance()));
       n.children.push(this.parseTerm());
     }
-    return n;
+    return this.finish(n);
   }
   parseTerm() {
-    const n = node("term");
+    const n = this.makeNode("term");
     n.children.push(this.parseFactor());
     while (this.current().type === "STAR" || this.current().type === "SLASH") {
       n.children.push(this.leaf(this.advance()));
       n.children.push(this.parseFactor());
     }
-    return n;
+    return this.finish(n);
   }
   parseFactor() {
     if (this.current().type === "ID" || this.current().type === "NUM") {
-      return node("factor", [this.leaf(this.advance())]);
+      return this.finish(this.makeNode("factor", [this.leaf(this.advance())]));
     }
     if (this.check("LPAREN")) {
-      const n = node("factor");
+      const n = this.makeNode("factor");
       n.children.push(this.leaf(this.advance()));
       n.children.push(this.parseExpr());
       n.children.push(this.expect("RPAREN"));
-      return n;
+      return this.finish(n);
     }
     throw new ParseError(this.current(), "identifier, number, or '('");
   }
@@ -756,6 +847,21 @@ const els = {
   grammarRules: document.getElementById("grammar-rules"),
   setsTable: document.getElementById("sets-table"),
   errorsHost: document.getElementById("errors-host"),
+  wtRestart: document.getElementById("wt-restart"),
+  wtBack: document.getElementById("wt-back"),
+  wtPlay: document.getElementById("wt-play"),
+  wtForward: document.getElementById("wt-forward"),
+  wtScrub: document.getElementById("wt-scrub"),
+  wtCount: document.getElementById("wt-count"),
+  wtSpeed: document.getElementById("wt-speed"),
+  wtTokens: document.getElementById("wt-tokens"),
+  wtTreeScroll: document.getElementById("wt-tree-scroll"),
+  wtTreeHost: document.getElementById("wt-tree-host"),
+  wtZoomIn: document.getElementById("wt-zoom-in"),
+  wtZoomOut: document.getElementById("wt-zoom-out"),
+  wtZoomFit: document.getElementById("wt-zoom-fit"),
+  wtZoomPct: document.getElementById("wt-zoom-pct"),
+  wtLog: document.getElementById("wt-log"),
 };
 
 function countNodesAndDepth(n, depth) {
@@ -844,6 +950,153 @@ els.zoomIn.addEventListener("click", () => { treeScale = Math.min(2.5, treeScale
 els.zoomOut.addEventListener("click", () => { treeScale = Math.max(0.15, treeScale - 0.15); renderTree(); });
 els.zoomFit.addEventListener("click", fitTree);
 
+/* =========================================================================
+   STEP-BY-STEP WALKTHROUGH — replays parser.trace one event at a time:
+   highlights the current token, reveals parse-tree nodes in the exact
+   order the algorithm built them, and narrates each step in the log panel.
+   ========================================================================= */
+let currentTrace = [];
+let currentTokens = [];
+let wtStep = 0;
+let wtPlaying = false;
+let wtScale = 1;
+let wtTimer = null;
+
+function wtFriendlyTok(t) {
+  if (!t) return "";
+  return t.type === "EOF" ? "end of file" : `'${t.lexeme}' (${t.type})`;
+}
+
+function wtDescribeEvent(ev) {
+  switch (ev.type) {
+    case "match": return { text: `Matched ${ev.label}`, tone: "ok" };
+    case "consume": return { text: `Consumed ${wtFriendlyTok(ev.token)}`, tone: "ok" };
+    case "error": return { text: ev.message, tone: "bad" };
+    case "skip": return { text: `Skipped ${wtFriendlyTok(ev.token)} — can't start a statement`, tone: "bad" };
+    case "resync": return { text: `Resumed parsing at ${wtFriendlyTok(ev.token)}`, tone: "warn" };
+    default: return { text: "", tone: "" };
+  }
+}
+
+function wtRevealedSet() {
+  const s = new Set();
+  for (let i = 0; i < wtStep; i++) {
+    const ev = currentTrace[i];
+    if (ev.nodeId !== undefined) s.add(ev.nodeId);
+  }
+  return s;
+}
+
+function svgFromLayoutFiltered(layout, scale, revealed, justRevealedId) {
+  const { nodes, edges, width, height } = layout;
+  let boxes = "", lines = "", texts = "";
+  for (const [p, c] of edges) {
+    if (!revealed.has(p._id) || !revealed.has(c._id)) continue;
+    const midY = (p._y + c._y) / 2;
+    lines += `<path d="M ${p._x} ${p._y} V ${midY} H ${c._x} V ${c._y}" fill="none" stroke="var(--border)" stroke-width="1.4"/>`;
+  }
+  for (const n of nodes) {
+    if (!revealed.has(n._id)) continue;
+    const label = esc(n.label);
+    const w = Math.max(28, label.length * 6.6 + 16);
+    const h = 22;
+    let fill = "var(--panel-2)", stroke = "var(--border)", tcolor = "var(--text-dim)", fam = "IBM Plex Sans";
+    if (n.token) {
+      const color = CATEGORY_COLOR_VAR[tokenCategory(n.token.type)];
+      fill = "var(--panel)"; stroke = color; tcolor = color; fam = "IBM Plex Mono";
+    } else if (!n.children.length) {
+      fill = "var(--panel)"; stroke = "var(--border)"; tcolor = "var(--text-faint)"; fam = "IBM Plex Mono";
+    }
+    if (n.isError) { fill = "var(--error-soft)"; stroke = "var(--error)"; tcolor = "var(--error)"; }
+    const isNew = n._id === justRevealedId;
+    if (isNew) {
+      boxes += `<rect x="${n._x - w/2 - 4}" y="${n._y - h/2 - 4}" width="${w+8}" height="${h+8}" rx="4" fill="none" stroke="var(--text)" stroke-width="1.3" opacity="0.55"/>`;
+    }
+    boxes += `<rect x="${n._x - w/2}" y="${n._y - h/2}" width="${w}" height="${h}" rx="3" fill="${fill}" stroke="${stroke}" stroke-width="${isNew ? 1.8 : 1.2}"/>`;
+    texts += `<text x="${n._x}" y="${n._y + 4}" text-anchor="middle" font-size="11" font-family="${fam}" fill="${tcolor}">${label}</text>`;
+  }
+  return `<svg viewBox="0 0 ${width} ${height}" width="${width*scale}" height="${height*scale}" role="img" aria-label="Parse tree being built step by step">${lines}${boxes}${texts}</svg>`;
+}
+
+function wtFit() {
+  if (!currentLayout) return;
+  const pad = 28;
+  const availW = els.wtTreeScroll.clientWidth - pad;
+  const availH = els.wtTreeScroll.clientHeight - pad;
+  if (availW <= 0 || availH <= 0) return;
+  const s = Math.min(availW / currentLayout.width, availH / currentLayout.height, 1);
+  wtScale = s > 0 ? s : 1;
+  wtRenderTree();
+}
+
+function wtRenderTree() {
+  if (!currentLayout) return;
+  const step = Math.min(wtStep, currentTrace.length);
+  const justRevealedId = step > 0 ? currentTrace[step - 1].nodeId : undefined;
+  els.wtTreeHost.innerHTML = svgFromLayoutFiltered(currentLayout, wtScale, wtRevealedSet(), justRevealedId);
+  els.wtZoomPct.textContent = Math.round(wtScale * 100) + "%";
+}
+
+function wtRenderTokenStrip() {
+  const currentPos = wtStep > 0 ? currentTrace[wtStep - 1].pos : 0;
+  els.wtTokens.innerHTML = currentTokens.map((t, i) => {
+    const isCurrent = i === currentPos;
+    const style = isCurrent ? "" : ` style="color:${CATEGORY_COLOR_VAR[tokenCategory(t.type)]}"`;
+    return `<span class="wt-tok${isCurrent ? " current" : ""}"${style}>${esc(t.lexeme || (t.type === "EOF" ? "␣" : ""))}</span>`;
+  }).join("");
+}
+
+function wtRenderLog() {
+  const lines = currentTrace.slice(0, wtStep).map(ev => {
+    const d = wtDescribeEvent(ev);
+    return `<div class="wt-log-line ${d.tone}">${esc(d.text)}</div>`;
+  });
+  if (wtStep === 0) lines.push(`<div class="wt-log-line hint">Press Play or step forward to begin.</div>`);
+  els.wtLog.innerHTML = lines.join("");
+  els.wtLog.scrollTop = els.wtLog.scrollHeight;
+}
+
+function wtSetPlaying(v) {
+  wtPlaying = v;
+  const done = wtStep >= currentTrace.length;
+  els.wtPlay.textContent = wtPlaying && !done ? "Pause" : done ? "Replay" : "Play";
+  if (wtTimer) { clearTimeout(wtTimer); wtTimer = null; }
+  if (wtPlaying && !done) {
+    wtTimer = setTimeout(() => { wtStepTo(wtStep + 1); if (wtPlaying) wtSetPlaying(true); }, Number(els.wtSpeed.value));
+  }
+}
+
+function wtStepTo(step) {
+  wtStep = Math.max(0, Math.min(currentTrace.length, step));
+  els.wtScrub.value = wtStep;
+  els.wtCount.textContent = `${wtStep} / ${currentTrace.length}`;
+  els.wtBack.disabled = wtStep === 0;
+  els.wtForward.disabled = wtStep >= currentTrace.length;
+  wtRenderTokenStrip();
+  wtRenderTree();
+  wtRenderLog();
+}
+
+function wtReset() {
+  wtSetPlaying(false);
+  els.wtScrub.max = currentTrace.length;
+  wtStepTo(0);
+  wtFit();
+}
+
+els.wtRestart.addEventListener("click", () => { wtSetPlaying(false); wtStepTo(0); });
+els.wtBack.addEventListener("click", () => { wtSetPlaying(false); wtStepTo(wtStep - 1); });
+els.wtForward.addEventListener("click", () => { wtSetPlaying(false); wtStepTo(wtStep + 1); });
+els.wtPlay.addEventListener("click", () => {
+  if (wtStep >= currentTrace.length) { wtStepTo(0); wtSetPlaying(true); }
+  else wtSetPlaying(!wtPlaying);
+});
+els.wtScrub.addEventListener("input", (e) => { wtSetPlaying(false); wtStepTo(Number(e.target.value)); });
+els.wtSpeed.addEventListener("change", () => { if (wtPlaying) wtSetPlaying(true); });
+els.wtZoomIn.addEventListener("click", () => { wtScale = Math.min(2.5, wtScale + 0.15); wtRenderTree(); });
+els.wtZoomOut.addEventListener("click", () => { wtScale = Math.max(0.15, wtScale - 0.15); wtRenderTree(); });
+els.wtZoomFit.addEventListener("click", wtFit);
+
 function analyze() {
   const text = els.input.value;
   let tokens;
@@ -875,6 +1128,10 @@ function analyze() {
   fitTree();
   renderTokens(tokens);
   renderErrors(parser.errors);
+
+  currentTrace = parser.trace;
+  currentTokens = tokens;
+  wtReset();
 }
 
 document.querySelectorAll(".chip-btn").forEach(btn => {
@@ -889,6 +1146,11 @@ document.querySelectorAll(".tabbtn").forEach(btn => {
     document.querySelectorAll(".tabpane").forEach(p => p.classList.remove("active"));
     btn.classList.add("active");
     document.getElementById("pane-" + btn.dataset.tab).classList.add("active");
+    // A hidden tabpane is display:none (0x0), so a tree that auto-fit while
+    // its tab wasn't active would have fit against nothing. Re-fit now that
+    // the pane just became visible and actually has real dimensions.
+    if (btn.dataset.tab === "tree") fitTree();
+    if (btn.dataset.tab === "walkthrough") wtFit();
   });
 });
 els.analyzeBtn.addEventListener("click", analyze);
