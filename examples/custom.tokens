@@ -1,0 +1,13 @@
+# Example user-defined token stream.
+# One token per whitespace-separated entry: TYPE or TYPE(lexeme).
+# TYPE must match a TokenType name (case-insensitive). Lexeme is required
+# for ID/NUM, optional (has a sensible default) for everything else.
+# '#' starts a comment; each source line becomes a line number for errors.
+
+INT ID(count) SEMI                                   # int count;
+ID(count) ASSIGN NUM(0) SEMI                          # count = 0;
+
+WHILE LPAREN ID(count) LT NUM(5) RPAREN LBRACE        # while (count < 5) {
+    PRINT LPAREN ID(count) RPAREN SEMI                #   print(count);
+    ID(count) ASSIGN ID(count) PLUS NUM(1) SEMI       #   count = count + 1;
+RBRACE                                                # }
