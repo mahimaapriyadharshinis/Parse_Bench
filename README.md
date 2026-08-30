@@ -9,7 +9,6 @@ No lexer is included by design — the analyzer's input is a token stream, not s
 text. See [Token-stream format](#token-stream-format) below for how to write one.
 
 **Repo:** https://github.com/mahimaapriyadharshinis/Parse_Bench
-**Try it live (no install):** https://claude.ai/code/artifact/02eceb5b-024d-474c-9a1a-243a7014119b
 
 ## Contents
 
@@ -41,9 +40,8 @@ Then open the URL it prints — use `http://localhost:5173`, not `http://127.0.0
 press Play.
 
 No Node/npm handy? Open [frontend/parse_bench.html](frontend/parse_bench.html) directly
-in a browser instead — same features, zero install — or use the hosted copy at
-https://claude.ai/code/artifact/02eceb5b-024d-474c-9a1a-243a7014119b. See
-[Frontends](#frontends) for what each tab does.
+in a browser instead — same features, zero install. See [Frontends](#frontends) for
+what each tab does.
 
 Want to run the actual Python the algorithm is written in (the graded source, not a
 UI) instead? See [Running the Python analyzer](#running-the-python-analyzer).
@@ -147,8 +145,7 @@ identical features:
 [Quick start](#quick-start) for the commands.
 
 **Standalone demo** (`frontend/parse_bench.html`) — zero install, one file. Double-click
-it, run `start frontend/parse_bench.html` on Windows, or use the hosted copy at
-https://claude.ai/code/artifact/02eceb5b-024d-474c-9a1a-243a7014119b.
+it, or run `start frontend/parse_bench.html` on Windows.
 
 ## Running the Python analyzer
 
