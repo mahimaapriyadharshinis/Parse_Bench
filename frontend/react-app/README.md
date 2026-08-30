@@ -27,8 +27,14 @@ src/
   lib/            Grammar, FIRST/FOLLOW/LL(1) table, token-stream parser, and the
                    recursive-descent parser itself — a 1:1 port of the project's
                    grammar.py / tokens.py / parser.py, not a reimplementation.
-  components/     UI: input panel, status hero, and a tabbed parse-tree/tokens/
-                   grammar/errors view.
+                   Also records every parse step (a rule matched, a token consumed,
+                   an error, a panic-mode skip) into a trace array, and maps each
+                   token to a syntax-highlight category (tokenStyle.js).
+  hooks/          useTreeZoom.js — auto-fits a tree to its container and exposes
+                   zoom in/out/fit, shared by the tree tab and the walkthrough tab.
+  components/     UI: input panel, status line, and a tabbed view — Walkthrough
+                   (the default tab: replays the trace with Play/Pause/step/scrub),
+                   ParseTreeView, TokensView, GrammarView, ErrorsView.
   data/examples.js
   App.jsx
 ```
