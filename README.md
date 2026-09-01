@@ -14,7 +14,7 @@ text. See [Token-stream format](#token-stream-format) for how to write one.
 
 - [Features](#features)
 - [Tech stack](#tech-stack)
-- [Grammar](#grammar)
+- [Grammar](#grammar) (full reference: [GRAMMAR.md](GRAMMAR.md))
 - [How it works](#how-it-works)
 - [Project structure](#project-structure)
 - [Getting started](#getting-started)
@@ -68,6 +68,10 @@ expr        -> term (("+"|"-") term)*
 term        -> factor (("*"|"/") factor)*
 factor      -> ID | NUM | "(" expr ")"
 ```
+
+See [GRAMMAR.md](GRAMMAR.md) for the full reference: this EBNF form, the
+pure-BNF form the algorithms actually run on, the terminal/non-terminal
+lists, and the computed FIRST/FOLLOW sets for every rule.
 
 ## How it works
 
