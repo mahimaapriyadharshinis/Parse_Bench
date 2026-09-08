@@ -25,14 +25,23 @@ This is the language as a human reads it, using `*` (zero or more), `?`
 
 ```
 program     -> statement*
-statement   -> declStmt | assignStmt | ifStmt | whileStmt | block | printStmt
+statement   -> declStmt | assignStmt | ifStmt | whileStmt | forStmt
+             | breakStmt | continueStmt | block | printStmt
 declStmt    -> "int" ID ";"
 assignStmt  -> ID "=" expr ";"
 ifStmt      -> "if" "(" cond ")" block ( "else" block )?
 whileStmt   -> "while" "(" cond ")" block
+forStmt     -> "for" "(" forInit ";" cond ";" forUpdate ")" block
+forInit     -> (ID "=" expr)?
+forUpdate   -> (ID "=" expr)?
+breakStmt   -> "break" ";"
+continueStmt -> "continue" ";"
 block       -> "{" statement* "}"
 printStmt   -> "print" "(" expr ")" ";"
-cond        -> expr relop expr
+cond        -> andCond ("||" andCond)*
+andCond     -> notCond ("&&" notCond)*
+notCond     -> "!" notCond | rel
+rel         -> expr relop expr
 relop       -> "<" | ">" | "<=" | ">=" | "==" | "!="
 expr        -> term (("+"|"-") term)*
 term        -> factor (("*"|"/") factor)*
@@ -43,18 +52,41 @@ factor      -> ID | NUM | "(" expr ")"
 
 - A **program** is zero or more statements.
 - A **statement** is exactly one of: a declaration, an assignment, an `if`, a
-  `while`, a `{ ... }` block, or a `print`.
+  `while`, a `for`, a `break`, a `continue`, a `{ ... }` block, or a `print`.
 - A **declaration** (`declStmt`) is `int`, then a name, then `;` — e.g. `int x;`
 - An **assignment** is a name, `=`, an expression, `;` — e.g. `x = 1 + 2;`
 - An **if** is `if (condition) block`, with an optional `else block`.
 - A **while** is `while (condition) block`.
+- A **for** is `for (init; condition; update) block`, where `init` and
+  `update` are each an optional single assignment (no `;` after `update`,
+  since the loop's own `)` follows it) — e.g. `for (i = 0; i < 10; i = i + 1)`.
+- A **break** / **continue** is just the keyword and a `;`. (This is a pure
+  syntax analyzer — there's no semantic check that a `break`/`continue`
+  actually sits inside a loop.)
 - A **block** is `{`, any number of statements, `}`.
 - A **print** is `print(expression);`
-- A **condition** (`cond`) is `expression relop expression` — e.g. `x < 10`
+- A **condition** (`cond`) is one or more `andCond`s joined by `||`
+  (left to right) — e.g. `x < 10 || y > 2`
+- An **andCond** is one or more `notCond`s joined by `&&` (left to right) —
+  e.g. `x < 10 && y > 2`
+- A **notCond** is `!` in front of another `notCond` (so `!!x<1` chains), or
+  just a `rel`. `!` binds tighter than `&&`, which binds tighter than `||` —
+  the usual precedence, so `!a < b && c < d` means `(!(a < b)) && (c < d)`.
+- A **rel** is `expression relop expression` — e.g. `x < 10`
 - A **relop** is one comparison operator: `< > <= >= == !=`
 - An **expr**ession is one or more `term`s joined by `+`/`-` (left to right).
 - A **term** is one or more `factor`s joined by `*`/`/` (left to right).
 - A **factor** is a name, a number, or a parenthesized expression.
+
+**A deliberate limitation:** conditions cannot be grouped in parentheses —
+`!(a < b)` and `(a < b) && (c < d)` are not in the language; write `!a < b`
+and `a < b && c < d` instead (no parens needed, since precedence already
+does the grouping). `rel`'s `expr relop expr` already claims `(` as the start
+of an arithmetic sub-expression (via `factor -> "(" expr ")"`); adding
+`"(" cond ")"` as another alternative would make two productions start with
+`(`, a FIRST/FIRST conflict that breaks the LL(1) proof in section 7. Keeping
+the grammar genuinely LL(1) — provable by construction, not just "seems to
+work" — was judged more valuable than parenthesized condition grouping.
 
 ## 2. Pure-BNF grammar (what the code parses)
 
@@ -65,44 +97,67 @@ classic FIRST/FOLLOW/LL(1)-table algorithms are defined over pure BNF, not EBNF.
 This is the actual `GRAMMAR` table in [src/grammar.c](src/grammar.c):
 
 ```
-program     -> statement program | ε
+program      -> statement program | ε
 
-statement   -> declStmt
-             | assignStmt
-             | ifStmt
-             | whileStmt
-             | block
-             | printStmt
+statement    -> declStmt
+              | assignStmt
+              | ifStmt
+              | whileStmt
+              | forStmt
+              | breakStmt
+              | continueStmt
+              | block
+              | printStmt
 
-declStmt    -> "int" ID ";"
+declStmt     -> "int" ID ";"
 
-assignStmt  -> ID "=" expr ";"
+assignStmt   -> ID "=" expr ";"
 
-ifStmt      -> "if" "(" cond ")" block elsePart
+ifStmt       -> "if" "(" cond ")" block elsePart
 
-elsePart    -> "else" block | ε
+elsePart     -> "else" block | ε
 
-whileStmt   -> "while" "(" cond ")" block
+whileStmt    -> "while" "(" cond ")" block
 
-block       -> "{" stmtList "}"
+forStmt      -> "for" "(" forInit ";" cond ";" forUpdate ")" block
 
-stmtList    -> statement stmtList | ε
+forInit      -> ID "=" expr | ε
 
-printStmt   -> "print" "(" expr ")" ";"
+forUpdate    -> ID "=" expr | ε
 
-cond        -> expr relop expr
+breakStmt    -> "break" ";"
 
-relop       -> "<" | ">" | "<=" | ">=" | "==" | "!="
+continueStmt -> "continue" ";"
 
-expr        -> term exprTail
+block        -> "{" stmtList "}"
 
-exprTail    -> "+" term exprTail | "-" term exprTail | ε
+stmtList     -> statement stmtList | ε
 
-term        -> factor termTail
+printStmt    -> "print" "(" expr ")" ";"
 
-termTail    -> "*" factor termTail | "/" factor termTail | ε
+cond         -> andCond orCondTail
 
-factor      -> ID | NUM | "(" expr ")"
+orCondTail   -> "||" andCond orCondTail | ε
+
+andCond      -> notCond andCondTail
+
+andCondTail  -> "&&" notCond andCondTail | ε
+
+notCond      -> "!" notCond | rel
+
+rel          -> expr relop expr
+
+relop        -> "<" | ">" | "<=" | ">=" | "==" | "!="
+
+expr         -> term exprTail
+
+exprTail     -> "+" term exprTail | "-" term exprTail | ε
+
+term         -> factor termTail
+
+termTail     -> "*" factor termTail | "/" factor termTail | ε
+
+factor       -> ID | NUM | "(" expr ")"
 ```
 
 **What changed and why:**
@@ -112,13 +167,28 @@ factor      -> ID | NUM | "(" expr ")"
 | `statement*` in `program` | `program -> statement program \| ε` | right-recursion + explicit "or nothing" |
 | `statement*` in `block` | new rule `stmtList -> statement stmtList \| ε` | same idea, factored out since `block` also needs the `{ }` |
 | `("else" block)?` | new rule `elsePart -> "else" block \| ε` | "optional" becomes "or nothing" |
+| `(ID "=" expr)?` in `forInit`/`forUpdate` | `forInit -> ID "=" expr \| ε` (and the same for `forUpdate`) | same idea |
 | `(("+"\|"-") term)*` | new rule `exprTail -> "+" term exprTail \| "-" term exprTail \| ε` | repetition becomes right recursion |
 | `(("*"\|"/") factor)*` | new rule `termTail -> "*" factor termTail \| "/" factor termTail \| ε` | same |
+| `("\|\|" andCond)*` in `cond` | new rule `orCondTail -> "\|\|" andCond orCondTail \| ε` | same |
+| `("&&" notCond)*` in `andCond` | new rule `andCondTail -> "&&" notCond andCondTail \| ε` | same |
 
 No left recursion exists anywhere in the grammar (left recursion would break a
 top-down/recursive-descent parser), and every rule was already written this way
 by design — nothing had to be eliminated, only the repetition operators
 expanded.
+
+The hand-written recursive-descent parser in [src/parser.c](src/parser.c)
+takes one liberty with `exprTail`/`termTail`/`orCondTail`/`andCondTail`: since
+each is just "zero or more repetitions of an operator and an operand," the
+parser folds each pair (tail nonterminal + its owning rule) into a single
+iterative `while` loop rather than writing a separate function per tail
+nonterminal — the same shape a hand-written parser would use, and exactly
+equivalent to the right-recursion above. `cond` and `andCond` additionally
+skip building their own wrapper tree node when the corresponding operator
+never appears (e.g. a plain `x < 10` produces just a `rel` node, not
+`cond -> andCond -> notCond -> rel` four nodes deep) — the same passthrough
+`parse_statement` already uses for picking one of several alternatives.
 
 ## 3. Terminals (tokens)
 
@@ -127,22 +197,24 @@ The literal symbols the grammar is built from — every one is a member of
 
 | Category | Terminals |
 |---|---|
-| Keywords | `INT` (`int`), `IF` (`if`), `ELSE` (`else`), `WHILE` (`while`), `PRINT` (`print`) |
+| Keywords | `INT` (`int`), `IF` (`if`), `ELSE` (`else`), `WHILE` (`while`), `PRINT` (`print`), `FOR` (`for`), `BREAK` (`break`), `CONTINUE` (`continue`) |
 | Identifiers / literals | `ID`, `NUM` |
 | Operators | `ASSIGN` (`=`), `PLUS` (`+`), `MINUS` (`-`), `STAR` (`*`), `SLASH` (`/`) |
 | Relational operators | `LT` (`<`), `GT` (`>`), `LE` (`<=`), `GE` (`>=`), `EQ` (`==`), `NE` (`!=`) |
+| Logical operators | `AND` (`&&`), `OR` (`\|\|`), `NOT` (`!`) |
 | Punctuation | `LPAREN` (`(`), `RPAREN` (`)`), `LBRACE` (`{`), `RBRACE` (`}`), `SEMI` (`;`) |
 | End marker | `EOF` |
 
 ## 4. Non-terminals
 
-The 17 grammar symbols that expand into other symbols (the `NonTerm` enum in
+The 27 grammar symbols that expand into other symbols (the `NonTerm` enum in
 [src/grammar.h](src/grammar.h)), with the start symbol marked:
 
 ```
 program (start symbol), statement, declStmt, assignStmt, ifStmt, elsePart,
-whileStmt, block, stmtList, printStmt, cond, relop, expr, exprTail, term,
-termTail, factor
+whileStmt, forStmt, forInit, forUpdate, breakStmt, continueStmt, block,
+stmtList, printStmt, cond, orCondTail, andCond, andCondTail, notCond, rel,
+relop, expr, exprTail, term, termTail, factor
 ```
 
 ## 5. FIRST sets
@@ -153,23 +225,33 @@ fixed-point algorithm in `compute_first_sets()` — not hand-filled.
 
 | Non-terminal | FIRST set |
 |---|---|
-| `program` | `ε, ID, IF, INT, LBRACE, PRINT, WHILE` |
-| `statement` | `ID, IF, INT, LBRACE, PRINT, WHILE` |
-| `declStmt` | `INT` |
+| `program` | `int, if, while, print, for, break, continue, ID, {, ε` |
+| `statement` | `int, if, while, print, for, break, continue, ID, {` |
+| `declStmt` | `int` |
 | `assignStmt` | `ID` |
-| `ifStmt` | `IF` |
-| `elsePart` | `ε, ELSE` |
-| `whileStmt` | `WHILE` |
-| `block` | `LBRACE` |
-| `stmtList` | `ε, ID, IF, INT, LBRACE, PRINT, WHILE` |
-| `printStmt` | `PRINT` |
-| `cond` | `ID, LPAREN, NUM` |
-| `relop` | `EQ, GE, GT, LE, LT, NE` |
-| `expr` | `ID, LPAREN, NUM` |
-| `exprTail` | `ε, MINUS, PLUS` |
-| `term` | `ID, LPAREN, NUM` |
-| `termTail` | `ε, SLASH, STAR` |
-| `factor` | `ID, LPAREN, NUM` |
+| `ifStmt` | `if` |
+| `elsePart` | `else, ε` |
+| `whileStmt` | `while` |
+| `forStmt` | `for` |
+| `forInit` | `ID, ε` |
+| `forUpdate` | `ID, ε` |
+| `breakStmt` | `break` |
+| `continueStmt` | `continue` |
+| `block` | `{` |
+| `stmtList` | `int, if, while, print, for, break, continue, ID, {, ε` |
+| `printStmt` | `print` |
+| `cond` | `ID, NUM, !, (` |
+| `orCondTail` | `\|\|, ε` |
+| `andCond` | `ID, NUM, !, (` |
+| `andCondTail` | `&&, ε` |
+| `notCond` | `ID, NUM, !, (` |
+| `rel` | `ID, NUM, (` |
+| `relop` | `<, >, <=, >=, ==, !=` |
+| `expr` | `ID, NUM, (` |
+| `exprTail` | `+, -, ε` |
+| `term` | `ID, NUM, (` |
+| `termTail` | `*, /, ε` |
+| `factor` | `ID, NUM, (` |
 
 ## 6. FOLLOW sets
 
@@ -180,33 +262,45 @@ Computed by the fixed-point algorithm in `compute_follow_sets()`.
 | Non-terminal | FOLLOW set |
 |---|---|
 | `program` | `EOF` |
-| `statement` | `EOF, ID, IF, INT, LBRACE, PRINT, RBRACE, WHILE` |
-| `declStmt` | `EOF, ID, IF, INT, LBRACE, PRINT, RBRACE, WHILE` |
-| `assignStmt` | `EOF, ID, IF, INT, LBRACE, PRINT, RBRACE, WHILE` |
-| `ifStmt` | `EOF, ID, IF, INT, LBRACE, PRINT, RBRACE, WHILE` |
-| `elsePart` | `EOF, ID, IF, INT, LBRACE, PRINT, RBRACE, WHILE` |
-| `whileStmt` | `EOF, ID, IF, INT, LBRACE, PRINT, RBRACE, WHILE` |
-| `block` | `ELSE, EOF, ID, IF, INT, LBRACE, PRINT, RBRACE, WHILE` |
-| `stmtList` | `RBRACE` |
-| `printStmt` | `EOF, ID, IF, INT, LBRACE, PRINT, RBRACE, WHILE` |
-| `cond` | `RPAREN` |
-| `relop` | `ID, LPAREN, NUM` |
-| `expr` | `EQ, GE, GT, LE, LT, NE, RPAREN, SEMI` |
-| `exprTail` | `EQ, GE, GT, LE, LT, NE, RPAREN, SEMI` |
-| `term` | `EQ, GE, GT, LE, LT, MINUS, NE, PLUS, RPAREN, SEMI` |
-| `termTail` | `EQ, GE, GT, LE, LT, MINUS, NE, PLUS, RPAREN, SEMI` |
-| `factor` | `EQ, GE, GT, LE, LT, MINUS, NE, PLUS, RPAREN, SEMI, SLASH, STAR` |
+| `statement` | `int, if, while, print, for, break, continue, ID, {, }, EOF` |
+| `declStmt` | `int, if, while, print, for, break, continue, ID, {, }, EOF` |
+| `assignStmt` | `int, if, while, print, for, break, continue, ID, {, }, EOF` |
+| `ifStmt` | `int, if, while, print, for, break, continue, ID, {, }, EOF` |
+| `elsePart` | `int, if, while, print, for, break, continue, ID, {, }, EOF` |
+| `whileStmt` | `int, if, while, print, for, break, continue, ID, {, }, EOF` |
+| `forStmt` | `int, if, while, print, for, break, continue, ID, {, }, EOF` |
+| `forInit` | `;` |
+| `forUpdate` | `)` |
+| `breakStmt` | `int, if, while, print, for, break, continue, ID, {, }, EOF` |
+| `continueStmt` | `int, if, while, print, for, break, continue, ID, {, }, EOF` |
+| `block` | `int, if, else, while, print, for, break, continue, ID, {, }, EOF` |
+| `stmtList` | `}` |
+| `printStmt` | `int, if, while, print, for, break, continue, ID, {, }, EOF` |
+| `cond` | `), ;` |
+| `orCondTail` | `), ;` |
+| `andCond` | `\|\|, ), ;` |
+| `andCondTail` | `\|\|, ), ;` |
+| `notCond` | `&&, \|\|, ), ;` |
+| `rel` | `&&, \|\|, ), ;` |
+| `relop` | `ID, NUM, (` |
+| `expr` | `<, >, <=, >=, ==, !=, &&, \|\|, ), ;` |
+| `exprTail` | `<, >, <=, >=, ==, !=, &&, \|\|, ), ;` |
+| `term` | `+, -, <, >, <=, >=, ==, !=, &&, \|\|, ), ;` |
+| `termTail` | `+, -, <, >, <=, >=, ==, !=, &&, \|\|, ), ;` |
+| `factor` | `+, -, *, /, <, >, <=, >=, ==, !=, &&, \|\|, ), ;` |
 
 ## 7. LL(1) parsing table
 
 `build_ll1_table()` combines FIRST and FOLLOW into a table of
-`(non-terminal, next token) -> production to use`. It fills **75
+`(non-terminal, next token) -> production to use`. It fills **117
 conflict-free entries** for this grammar — and if any cell were ever written
 twice (a FIRST/FIRST or FIRST/FOLLOW conflict), table construction raises a
 an error immediately rather than silently overwriting it. That the table
 builds without error *is* the proof that this grammar is genuinely LL(1): a
 parser can always decide which production to use by looking at just one token
-of lookahead, with no backtracking and no ambiguity.
+of lookahead, with no backtracking and no ambiguity. (This is also exactly
+why parenthesized condition grouping was left out — see section 1 — adding it
+the naive way is the one change that *does* fail this check.)
 
-The full 75-entry table is `g_table` at runtime; print it with
+The full 117-entry table is `g_table` at runtime; print it with
 `parsebench --grammar`, or browse it in the terminal UI's Grammar tab.

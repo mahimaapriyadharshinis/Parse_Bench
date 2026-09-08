@@ -4,14 +4,23 @@
  * The restricted language grammar, in EBNF, is:
  *
  *     program     -> statement*
- *     statement   -> declStmt | assignStmt | ifStmt | whileStmt | block | printStmt
+ *     statement   -> declStmt | assignStmt | ifStmt | whileStmt | forStmt
+ *                  | breakStmt | continueStmt | block | printStmt
  *     declStmt    -> "int" ID ";"
  *     assignStmt  -> ID "=" expr ";"
  *     ifStmt      -> "if" "(" cond ")" block ( "else" block )?
  *     whileStmt   -> "while" "(" cond ")" block
+ *     forStmt     -> "for" "(" forInit ";" cond ";" forUpdate ")" block
+ *     forInit     -> (ID "=" expr)?
+ *     forUpdate   -> (ID "=" expr)?
+ *     breakStmt   -> "break" ";"
+ *     continueStmt -> "continue" ";"
  *     block       -> "{" statement* "}"
  *     printStmt   -> "print" "(" expr ")" ";"
- *     cond        -> expr relop expr
+ *     cond        -> andCond ("||" andCond)*
+ *     andCond     -> notCond ("&&" notCond)*
+ *     notCond     -> "!" notCond | rel
+ *     rel         -> expr relop expr
  *     relop       -> "<" | ">" | "<=" | ">=" | "==" | "!="
  *     expr        -> term (("+"|"-") term)*
  *     term        -> factor (("*"|"/") factor)*
@@ -31,9 +40,11 @@
 
 typedef enum {
     NT_PROGRAM, NT_STATEMENT, NT_DECLSTMT, NT_ASSIGNSTMT, NT_IFSTMT,
-    NT_ELSEPART, NT_WHILESTMT, NT_BLOCK, NT_STMTLIST, NT_PRINTSTMT,
-    NT_COND, NT_RELOP, NT_EXPR, NT_EXPRTAIL, NT_TERM, NT_TERMTAIL,
-    NT_FACTOR,
+    NT_ELSEPART, NT_WHILESTMT, NT_FORSTMT, NT_FORINIT, NT_FORUPDATE,
+    NT_BREAKSTMT, NT_CONTINUESTMT, NT_BLOCK, NT_STMTLIST, NT_PRINTSTMT,
+    NT_COND, NT_ORCONDTAIL, NT_ANDCOND, NT_ANDCONDTAIL, NT_NOTCOND,
+    NT_REL, NT_RELOP,
+    NT_EXPR, NT_EXPRTAIL, NT_TERM, NT_TERMTAIL, NT_FACTOR,
     NT_COUNT
 } NonTerm;
 
@@ -51,7 +62,7 @@ typedef int Symbol;
 #define SYM_NT(s)          ((NonTerm)((s) - NT_OFFSET))
 #define NT_SYM(n)          ((Symbol)(NT_OFFSET + (n)))
 
-#define MAX_RHS 8
+#define MAX_RHS 9
 
 typedef struct {
     NonTerm lhs;

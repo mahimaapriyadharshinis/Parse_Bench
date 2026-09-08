@@ -309,11 +309,13 @@ static const char *token_color(TokenType t)
 {
     switch (t) {
     case TT_INT: case TT_IF: case TT_ELSE: case TT_WHILE: case TT_PRINT:
+    case TT_FOR: case TT_BREAK: case TT_CONTINUE:
         return C_MAGENTA;
     case TT_ID:  return C_CYAN;
     case TT_NUM: return C_YELLOW;
     case TT_ASSIGN: case TT_PLUS: case TT_MINUS: case TT_STAR: case TT_SLASH:
     case TT_LT: case TT_GT: case TT_LE: case TT_GE: case TT_EQ: case TT_NE:
+    case TT_AND: case TT_OR: case TT_NOT:
         return C_GREEN;
     case TT_EOF: return C_GREY;
     default:     return C_WHITE;   /* punctuation */

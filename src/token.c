@@ -6,20 +6,22 @@
 #include <string.h>
 
 static const char *const TYPE_NAMES[TT_COUNT] = {
-    "INT", "IF", "ELSE", "WHILE", "PRINT",
+    "INT", "IF", "ELSE", "WHILE", "PRINT", "FOR", "BREAK", "CONTINUE",
     "ID", "NUM",
     "ASSIGN", "PLUS", "MINUS", "STAR", "SLASH",
     "LT", "GT", "LE", "GE", "EQ", "NE",
+    "AND", "OR", "NOT",
     "LPAREN", "RPAREN", "LBRACE", "RBRACE", "SEMI",
     "EOF"
 };
 
 /* NULL means "this type has no fixed spelling, the lexeme must be given". */
 static const char *const DEFAULT_LEXEME[TT_COUNT] = {
-    "int", "if", "else", "while", "print",
+    "int", "if", "else", "while", "print", "for", "break", "continue",
     NULL, NULL,                       /* ID, NUM */
     "=", "+", "-", "*", "/",
     "<", ">", "<=", ">=", "==", "!=",
+    "&&", "||", "!",
     "(", ")", "{", "}", ";",
     ""                                /* EOF */
 };
@@ -197,6 +199,34 @@ int ts_parse_text(const char *text, TokenStream *out, char *err, size_t errsz)
 
     ts_append_eof(out);
     return 0;
+}
+
+void ts_write_text(const TokenStream *ts, FILE *out)
+{
+    int have_line = 0;
+    int cur_line = 0;
+
+    for (size_t i = 0; i < ts->count; i++) {
+        const Token *t = &ts->data[i];
+        if (t->type == TT_EOF) continue;
+
+        if (!have_line) {
+            have_line = 1;
+            cur_line = t->line;
+        } else if (t->line != cur_line) {
+            fputc('\n', out);
+            cur_line = t->line;
+        } else {
+            fputc(' ', out);
+        }
+
+        const char *def = DEFAULT_LEXEME[t->type];
+        if (def != NULL && strcmp(def, t->lexeme) == 0)
+            fputs(TYPE_NAMES[t->type], out);
+        else
+            fprintf(out, "%s(%s)", TYPE_NAMES[t->type], t->lexeme);
+    }
+    if (have_line) fputc('\n', out);
 }
 
 int ts_parse_file(const char *path, TokenStream *out, char *err, size_t errsz)

@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "grammar.h"
+#include "lexer.h"
 #include "minitest.h"
 #include "parse_tree.h"
 #include "parser.h"
@@ -30,6 +31,12 @@ static const char *child_label(const ParseNode *n, int i)
     if (i < 0) i += n->child_count;
     if (i < 0 || i >= n->child_count) return "<no such child>";
     return n->children[i]->label;
+}
+
+static const ParseNode *child(const ParseNode *n, int i)
+{
+    if (i < 0) i += n->child_count;
+    return n->children[i];
 }
 
 /* -- valid programs -------------------------------------------------------- */
@@ -369,6 +376,334 @@ TEST(test_full_custom_stream_parses_cleanly_end_to_end)
     ts_free(&ts);
 }
 
+/* -- for/break/continue, logical operators (&&, ||, !) ---------------------- */
+
+TEST(test_for_loop_with_init_and_update_has_no_errors)
+{
+    TokenStream ts;
+    ParseResult r = parse_text(
+        "FOR LPAREN ID(i) ASSIGN NUM(0) SEMI ID(i) LT NUM(5) SEMI "
+        "ID(i) ASSIGN ID(i) PLUS NUM(1) RPAREN LBRACE\n"
+        "PRINT LPAREN ID(i) RPAREN SEMI\n"
+        "RBRACE\n", &ts);
+
+    CHECK_INT(r.error_count, 0);
+    CHECK_STR(child_label(r.tree, 0), "forStmt");
+    CHECK_STR(child_label(child(r.tree, 0), 2), "forInit");
+    CHECK_STR(child_label(child(r.tree, 0), 6), "forUpdate");
+
+    parse_result_free(&r);
+    ts_free(&ts);
+}
+
+TEST(test_for_loop_with_empty_init_and_update_is_valid)
+{
+    TokenStream ts;
+    ParseResult r = parse_text(
+        "FOR LPAREN SEMI ID(i) LT NUM(5) SEMI RPAREN LBRACE\n"
+        "RBRACE\n", &ts);
+
+    CHECK_INT(r.error_count, 0);
+    CHECK_STR(child_label(child(r.tree, 0), 2), "forInit(\xce\xb5)");
+    CHECK_STR(child_label(child(r.tree, 0), 6), "forUpdate(\xce\xb5)");
+
+    parse_result_free(&r);
+    ts_free(&ts);
+}
+
+TEST(test_break_and_continue_inside_nested_loops_have_no_errors)
+{
+    TokenStream ts;
+    ParseResult r = parse_text(
+        "WHILE LPAREN ID(x) LT NUM(10) RPAREN LBRACE\n"
+        "IF LPAREN ID(x) EQ NUM(5) RPAREN LBRACE\n"
+        "CONTINUE SEMI\n"
+        "RBRACE\n"
+        "BREAK SEMI\n"
+        "RBRACE\n", &ts);
+
+    CHECK_INT(r.error_count, 0);
+
+    const ParseNode *while_block = child(child(r.tree, 0), -1);  /* whileStmt's block */
+    CHECK_STR(child_label(while_block, 1), "ifStmt");
+    CHECK_STR(child_label(while_block, 2), "breakStmt");
+
+    parse_result_free(&r);
+    ts_free(&ts);
+}
+
+TEST(test_and_condition_has_no_errors_and_correct_shape)
+{
+    TokenStream ts;
+    ParseResult r = parse_text(
+        "IF LPAREN ID(x) LT NUM(5) AND ID(y) GT NUM(2) RPAREN LBRACE\n"
+        "RBRACE\n", &ts);
+
+    CHECK_INT(r.error_count, 0);
+    const ParseNode *cond = child(child(r.tree, 0), 2);  /* ifStmt's cond slot */
+    CHECK_STR(cond->label, "andCond");
+    CHECK_INT(cond->child_count, 3);
+    CHECK_STR(child_label(cond, 0), "rel");
+    CHECK_STR(child_label(cond, 1), "&&");
+    CHECK_STR(child_label(cond, 2), "rel");
+
+    parse_result_free(&r);
+    ts_free(&ts);
+}
+
+TEST(test_or_binds_looser_than_and_no_grouping_parens_needed)
+{
+    TokenStream ts;
+    ParseResult r = parse_text(
+        "IF LPAREN ID(x) LT NUM(1) OR ID(y) LT NUM(2) AND ID(z) LT NUM(3) "
+        "RPAREN LBRACE\nRBRACE\n", &ts);
+
+    CHECK_INT(r.error_count, 0);
+    const ParseNode *cond = child(child(r.tree, 0), 2);
+    CHECK_STR(cond->label, "cond");            /* top level: "||" was used */
+    CHECK_STR(child_label(cond, 0), "rel");    /* x < 1, no "&&" beside it */
+    CHECK_STR(child_label(cond, 1), "||");
+    CHECK_STR(child_label(cond, 2), "andCond"); /* y < 2 && z < 3 binds tighter */
+
+    parse_result_free(&r);
+    ts_free(&ts);
+}
+
+TEST(test_bare_not_condition_has_no_errors)
+{
+    TokenStream ts;
+    ParseResult r = parse_text(
+        "IF LPAREN NOT ID(x) LT NUM(5) RPAREN LBRACE\nRBRACE\n", &ts);
+
+    CHECK_INT(r.error_count, 0);
+    const ParseNode *cond = child(child(r.tree, 0), 2);
+    CHECK_STR(cond->label, "notCond");
+    CHECK_STR(child_label(cond, 0), "!");
+    CHECK_STR(child_label(cond, 1), "rel");
+
+    parse_result_free(&r);
+    ts_free(&ts);
+}
+
+TEST(test_parenthesized_condition_grouping_is_not_supported_but_recovers)
+{
+    /* By design: rel's "expr relop expr" already claims "(" (via factor's
+     * "(" expr ")"), so adding "(" cond ")" as another alternative would be
+     * a FIRST/FIRST conflict and break the grammar's LL(1) proof. "!(x<3)"
+     * is therefore not in the language -- write "!x<3" instead. This test
+     * just confirms the rejection recovers instead of crashing. */
+    TokenStream ts;
+    ParseResult r = parse_text(
+        "IF LPAREN NOT LPAREN ID(x) LT NUM(3) RPAREN RPAREN LBRACE\nRBRACE\n", &ts);
+
+    CHECK(r.error_count > 0);
+
+    parse_result_free(&r);
+    ts_free(&ts);
+}
+
+/* -- lexer (source text -> TokenStream) ------------------------------------- */
+
+TEST(test_lexer_produces_expected_tokens_for_a_simple_program)
+{
+    TokenStream ts;
+    char err[512];
+    ts_init(&ts);
+    CHECK_INT(lex_source("int x;\nx = 1 + 2;\nprint(x);\n", &ts, err, sizeof err), 0);
+
+    /* int x ; x = 1 + 2 ; print ( x ) ; EOF */
+    CHECK_INT((int)ts.count, 15);
+    CHECK_INT(ts.data[0].type, TT_INT);
+    CHECK_INT(ts.data[1].type, TT_ID);
+    CHECK_STR(ts.data[1].lexeme, "x");
+    CHECK_INT(ts.data[2].type, TT_SEMI);
+    CHECK_INT(ts.data[5].type, TT_NUM);
+    CHECK_STR(ts.data[5].lexeme, "1");
+    CHECK_INT(ts.data[ts.count - 1].type, TT_EOF);
+
+    ts_free(&ts);
+}
+
+TEST(test_lexer_tracks_source_line_numbers)
+{
+    TokenStream ts;
+    char err[512];
+    ts_init(&ts);
+    CHECK_INT(lex_source("int x;\n\nx = 1;\n", &ts, err, sizeof err), 0);
+
+    CHECK_INT(ts.data[0].line, 1);   /* int */
+    CHECK_INT(ts.data[3].line, 3);   /* x (assignment) */
+
+    ts_free(&ts);
+}
+
+TEST(test_lexer_skips_line_and_block_comments)
+{
+    TokenStream ts;
+    char err[512];
+    ts_init(&ts);
+    CHECK_INT(lex_source(
+        "int x; // trailing line comment\n"
+        "/* a block\n   comment */ x = 2;\n", &ts, err, sizeof err), 0);
+
+    CHECK_INT((int)ts.count, 8); /* int x ; x = 2 ; EOF */
+    CHECK_INT(ts.data[3].line, 3); /* x after the block comment, on line 3 */
+
+    ts_free(&ts);
+}
+
+TEST(test_lexer_recognizes_two_character_operators)
+{
+    TokenStream ts;
+    char err[512];
+    ts_init(&ts);
+    CHECK_INT(lex_source("x <= 1 >= 2 == 3 != 4", &ts, err, sizeof err), 0);
+
+    CHECK_INT(ts.data[1].type, TT_LE);
+    CHECK_INT(ts.data[3].type, TT_GE);
+    CHECK_INT(ts.data[5].type, TT_EQ);
+    CHECK_INT(ts.data[7].type, TT_NE);
+
+    ts_free(&ts);
+}
+
+TEST(test_lexer_recognizes_for_break_continue_keywords)
+{
+    TokenStream ts;
+    char err[512];
+    ts_init(&ts);
+    CHECK_INT(lex_source("for break continue x", &ts, err, sizeof err), 0);
+
+    CHECK_INT(ts.data[0].type, TT_FOR);
+    CHECK_INT(ts.data[1].type, TT_BREAK);
+    CHECK_INT(ts.data[2].type, TT_CONTINUE);
+    CHECK_INT(ts.data[3].type, TT_ID);   /* "x" is not a keyword */
+
+    ts_free(&ts);
+}
+
+TEST(test_lexer_recognizes_logical_operators)
+{
+    TokenStream ts;
+    char err[512];
+    ts_init(&ts);
+    CHECK_INT(lex_source("x && y || !z", &ts, err, sizeof err), 0);
+
+    CHECK_INT(ts.data[1].type, TT_AND);
+    CHECK_INT(ts.data[3].type, TT_OR);
+    CHECK_INT(ts.data[4].type, TT_NOT);
+
+    ts_free(&ts);
+}
+
+TEST(test_lexer_reports_lone_ampersand_and_pipe_as_errors)
+{
+    TokenStream ts1, ts2;
+    char err[512];
+
+    ts_init(&ts1);
+    CHECK_INT(lex_source("x & y", &ts1, err, sizeof err), -1);
+    CHECK_SUBSTR(err, "'&' must be followed by '&'");
+    ts_free(&ts1);
+
+    ts_init(&ts2);
+    CHECK_INT(lex_source("x | y", &ts2, err, sizeof err), -1);
+    CHECK_SUBSTR(err, "'|' must be followed by '|'");
+    ts_free(&ts2);
+}
+
+TEST(test_lexer_reports_unknown_character)
+{
+    TokenStream ts;
+    char err[512];
+    ts_init(&ts);
+    CHECK_INT(lex_source("x = 1 @ 2;", &ts, err, sizeof err), -1);
+    CHECK_SUBSTR(err, "unexpected character '@'");
+    ts_free(&ts);
+}
+
+TEST(test_lexer_reports_unterminated_block_comment)
+{
+    TokenStream ts;
+    char err[512];
+    ts_init(&ts);
+    CHECK_INT(lex_source("int x; /* never closed", &ts, err, sizeof err), -1);
+    CHECK_SUBSTR(err, "unterminated block comment");
+    ts_free(&ts);
+}
+
+TEST(test_lexer_output_round_trips_through_the_text_format)
+{
+    TokenStream lexed;
+    char err[512];
+    ts_init(&lexed);
+    CHECK_INT(lex_source(
+        "int count;\ncount = 0;\n"
+        "while (count < 5) {\n  print(count);\n  count = count + 1;\n}\n",
+        &lexed, err, sizeof err), 0);
+
+    FILE *tmp = tmpfile();
+    CHECK(tmp != NULL);
+    ts_write_text(&lexed, tmp);
+    rewind(tmp);
+
+    char buf[2048];
+    size_t n = fread(buf, 1, sizeof buf - 1, tmp);
+    buf[n] = '\0';
+    fclose(tmp);
+
+    TokenStream reparsed;
+    ts_init(&reparsed);
+    CHECK_INT(ts_parse_text(buf, &reparsed, err, sizeof err), 0);
+
+    CHECK_INT((int)reparsed.count, (int)lexed.count);
+    for (size_t i = 0; i < lexed.count && i < reparsed.count; i++) {
+        CHECK_INT(reparsed.data[i].type, lexed.data[i].type);
+        CHECK_STR(reparsed.data[i].lexeme, lexed.data[i].lexeme);
+    }
+
+    ts_free(&lexed);
+    ts_free(&reparsed);
+}
+
+TEST(test_lexer_output_parses_cleanly_end_to_end)
+{
+    TokenStream ts;
+    char err[512];
+    ts_init(&ts);
+    CHECK_INT(lex_source(
+        "int x;\nx = 1 + 2;\nprint(x);\n", &ts, err, sizeof err), 0);
+
+    ParseResult r = parse_tokens(ts.data, ts.count);
+    CHECK_INT(r.error_count, 0);
+    CHECK_INT(r.tree->child_count, 3);
+    CHECK_STR(child_label(r.tree, 0), "declStmt");
+    CHECK_STR(child_label(r.tree, 1), "assignStmt");
+    CHECK_STR(child_label(r.tree, 2), "printStmt");
+
+    parse_result_free(&r);
+    ts_free(&ts);
+}
+
+TEST(test_lexer_output_for_loop_with_break_and_and_parses_cleanly)
+{
+    TokenStream ts;
+    char err[512];
+    ts_init(&ts);
+    CHECK_INT(lex_source(
+        "int i;\n"
+        "for (i = 0; i < 10 && i != 7; i = i + 1) {\n"
+        "  if (i == 3) { break; }\n"
+        "}\n", &ts, err, sizeof err), 0);
+
+    ParseResult r = parse_tokens(ts.data, ts.count);
+    CHECK_INT(r.error_count, 0);
+    CHECK_STR(child_label(r.tree, 1), "forStmt");
+
+    parse_result_free(&r);
+    ts_free(&ts);
+}
+
 /* -------------------------------------------------------------------------- */
 
 int main(void)
@@ -403,6 +738,27 @@ int main(void)
     RUN(test_missing_required_lexeme_is_an_error);
     RUN(test_unknown_token_type_is_an_error);
     RUN(test_full_custom_stream_parses_cleanly_end_to_end);
+
+    RUN(test_for_loop_with_init_and_update_has_no_errors);
+    RUN(test_for_loop_with_empty_init_and_update_is_valid);
+    RUN(test_break_and_continue_inside_nested_loops_have_no_errors);
+    RUN(test_and_condition_has_no_errors_and_correct_shape);
+    RUN(test_or_binds_looser_than_and_no_grouping_parens_needed);
+    RUN(test_bare_not_condition_has_no_errors);
+    RUN(test_parenthesized_condition_grouping_is_not_supported_but_recovers);
+
+    RUN(test_lexer_produces_expected_tokens_for_a_simple_program);
+    RUN(test_lexer_tracks_source_line_numbers);
+    RUN(test_lexer_skips_line_and_block_comments);
+    RUN(test_lexer_recognizes_two_character_operators);
+    RUN(test_lexer_recognizes_for_break_continue_keywords);
+    RUN(test_lexer_recognizes_logical_operators);
+    RUN(test_lexer_reports_lone_ampersand_and_pipe_as_errors);
+    RUN(test_lexer_reports_unknown_character);
+    RUN(test_lexer_reports_unterminated_block_comment);
+    RUN(test_lexer_output_round_trips_through_the_text_format);
+    RUN(test_lexer_output_parses_cleanly_end_to_end);
+    RUN(test_lexer_output_for_loop_with_break_and_and_parses_cleanly);
 
     return mt_report();
 }

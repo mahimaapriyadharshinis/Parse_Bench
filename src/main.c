@@ -7,17 +7,22 @@
  *   parsebench --cli --file FILE     run a token-stream file and print the results
  *   parsebench --cli --stdin         read a token stream from stdin
  *   parsebench --cli --dot ...       also write parse_tree_<name>.dot
+ *   parsebench --lex FILE [-o OUT]   convert C-like source into the token-stream format
+ *   parsebench --lex --stdin         ...reading the source from stdin instead
  *   parsebench --grammar             print FIRST/FOLLOW sets and the LL(1) table
  *   parsebench --help
  *
  * See src/token.h for the token-stream text format, or examples/custom.tokens
- * for a full sample file.
+ * for a full sample file. --lex is an optional convenience front-end
+ * (src/lexer.c) that produces that format from real source text; the
+ * analyzer itself still only ever consumes a token stream.
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "grammar.h"
+#include "lexer.h"
 #include "parse_tree.h"
 #include "parser.h"
 #include "samples.h"
@@ -36,6 +41,8 @@ static void usage(FILE *out)
         "  parsebench --cli --file FILE  run a token-stream file, print the results\n"
         "  parsebench --cli --stdin      read a token stream from stdin\n"
         "  parsebench --cli --dot ...    also write parse_tree_<name>.dot\n"
+        "  parsebench --lex FILE [-o OUT]  convert C-like source to the token-stream format\n"
+        "  parsebench --lex --stdin      ...reading the source from stdin instead\n"
         "  parsebench --grammar          print FIRST/FOLLOW sets and the LL(1) table\n"
         "  parsebench --help\n"
         "\n"
@@ -44,7 +51,8 @@ static void usage(FILE *out)
         fprintf(out, "%s%s", i ? ", " : "", SAMPLES[i].name);
     fputs("\n\nToken-stream format: one or more tokens per line, whitespace-separated,\n"
           "'#' starts a comment. Each token is TYPE or TYPE(lexeme); the lexeme is\n"
-          "required for ID and NUM. See examples/custom.tokens.\n", out);
+          "required for ID and NUM. See examples/custom.tokens. --lex produces this\n"
+          "format from real C-like source, e.g. parsebench --lex prog.c -o prog.tokens.\n", out);
 }
 
 /* Read all of stdin into a malloc'd buffer. */
@@ -193,6 +201,92 @@ static int cli_mode(int argc, char **argv)
     return rc;
 }
 
+/* -- lex mode ---------------------------------------------------------------
+ *
+ * Converts real C-like source text into the plain-text token-stream format
+ * that the analyzer (and --cli --file / the interactive UI) reads. This is
+ * the only place in the project that reads source text instead of a token
+ * stream; everything downstream of it is unaffected. */
+
+static char *read_all_file(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) { fprintf(stderr, "Cannot open file: %s\n", path); return NULL; }
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); fprintf(stderr, "Cannot read: %s\n", path); return NULL; }
+    long size = ftell(f);
+    if (size < 0) { fclose(f); fprintf(stderr, "Cannot read: %s\n", path); return NULL; }
+    rewind(f);
+
+    char *buf = (char *)malloc((size_t)size + 1);
+    if (!buf) { fclose(f); fprintf(stderr, "out of memory\n"); return NULL; }
+    size_t got = fread(buf, 1, (size_t)size, f);
+    buf[got] = '\0';
+    fclose(f);
+    return buf;
+}
+
+static int lex_mode(int argc, char **argv)
+{
+    const char *file = NULL;
+    const char *out_path = NULL;
+    int use_stdin = 0;
+
+    for (int i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "--stdin") == 0) {
+            use_stdin = 1;
+        } else if (strcmp(argv[i], "-o") == 0) {
+            if (i + 1 >= argc) { fprintf(stderr, "-o needs a path\n"); return 1; }
+            out_path = argv[++i];
+        } else if (argv[i][0] == '-') {
+            fprintf(stderr, "unknown option '%s'\n", argv[i]);
+            return 1;
+        } else if (!file) {
+            file = argv[i];
+        } else {
+            fprintf(stderr, "unexpected argument '%s'\n", argv[i]);
+            return 1;
+        }
+    }
+
+    if (!file && !use_stdin) {
+        fprintf(stderr, "--lex needs a source FILE or --stdin\n");
+        return 1;
+    }
+    if (file && use_stdin) {
+        fprintf(stderr, "--lex takes a FILE or --stdin, not both\n");
+        return 1;
+    }
+
+    char *text = use_stdin ? read_all_stdin() : read_all_file(file);
+    if (!text) return 1;
+
+    TokenStream ts;
+    ts_init(&ts);
+    char err[512];
+    int rc = lex_source(text, &ts, err, sizeof err);
+    free(text);
+    if (rc != 0) {
+        fprintf(stderr, "Lex error: %s\n", err);
+        ts_free(&ts);
+        return 1;
+    }
+
+    FILE *out = stdout;
+    if (out_path) {
+        out = fopen(out_path, "wb");
+        if (!out) {
+            fprintf(stderr, "Cannot open file for writing: %s\n", out_path);
+            ts_free(&ts);
+            return 1;
+        }
+    }
+    ts_write_text(&ts, out);
+    if (out_path) fclose(out);
+
+    ts_free(&ts);
+    return 0;
+}
+
 /* -- grammar dump ---------------------------------------------------------- */
 
 static void print_grammar_report(void)
@@ -257,6 +351,9 @@ int main(int argc, char **argv)
     }
     if (argc >= 2 && strcmp(argv[1], "--cli") == 0) {
         return cli_mode(argc - 2, argv + 2);
+    }
+    if (argc >= 2 && strcmp(argv[1], "--lex") == 0) {
+        return lex_mode(argc - 2, argv + 2);
     }
     if (argc >= 2 && argv[1][0] == '-') {
         fprintf(stderr, "unknown option '%s'\n\n", argv[1]);

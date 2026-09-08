@@ -17,7 +17,7 @@ CFLAGS  ?= -std=c99 -Wall -Wextra -O2
 CPPFLAGS = -Isrc
 
 BIN_DIR   = build
-CORE_SRC  = src/token.c src/grammar.c src/parse_tree.c src/parser.c
+CORE_SRC  = src/token.c src/lexer.c src/grammar.c src/parse_tree.c src/parser.c
 APP_SRC   = $(CORE_SRC) src/term.c src/tui.c src/main.c
 TEST_SRC  = $(CORE_SRC) tests/watchdog.c tests/test_main.c
 

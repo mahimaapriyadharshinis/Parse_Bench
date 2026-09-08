@@ -1,25 +1,30 @@
 /* Token representation for the syntax analyzer.
  *
- * The lexer is out of scope for this project (the analyzer is handed a token
- * stream). This header defines the Token type, the plain-text token-stream
- * format reader, and a few hand-built streams used for demos and tests.
+ * The analyzer itself only ever consumes a TokenStream -- it never reads
+ * source text. This header defines the Token type, the plain-text
+ * token-stream format reader/writer, and a few hand-built streams used for
+ * demos and tests. (An optional convenience lexer that produces a
+ * TokenStream from real C-like source lives separately, in src/lexer.h --
+ * it sits in front of this interface, not inside it.)
  */
 #ifndef TOKEN_H
 #define TOKEN_H
 
 #include <stddef.h>
+#include <stdio.h>
 
 /* Keep TT_EOF last before TT_COUNT: terminal sets are bitsets over this
  * enum, and grammar.h assumes TT_COUNT fits in a uint32_t with one spare
  * bit left over for epsilon. */
 typedef enum {
     /* keywords */
-    TT_INT, TT_IF, TT_ELSE, TT_WHILE, TT_PRINT,
+    TT_INT, TT_IF, TT_ELSE, TT_WHILE, TT_PRINT, TT_FOR, TT_BREAK, TT_CONTINUE,
     /* literals / identifiers */
     TT_ID, TT_NUM,
     /* operators */
     TT_ASSIGN, TT_PLUS, TT_MINUS, TT_STAR, TT_SLASH,
     TT_LT, TT_GT, TT_LE, TT_GE, TT_EQ, TT_NE,
+    TT_AND, TT_OR, TT_NOT,
     /* punctuation */
     TT_LPAREN, TT_RPAREN, TT_LBRACE, TT_RBRACE, TT_SEMI,
     /* end of stream */
@@ -70,5 +75,11 @@ void ts_append_eof(TokenStream *ts);
  * reason into `err`. */
 int ts_parse_text(const char *text, TokenStream *out, char *err, size_t errsz);
 int ts_parse_file(const char *path, TokenStream *out, char *err, size_t errsz);
+
+/* Write `ts` back out in the plain-text token-stream format above (the
+ * inverse of ts_parse_text) -- one line per distinct source `line` value,
+ * each token as TYPE or TYPE(lexeme). A trailing EOF token, if present, is
+ * not printed; ts_parse_text/ts_append_eof restore it on read. */
+void ts_write_text(const TokenStream *ts, FILE *out);
 
 #endif /* TOKEN_H */

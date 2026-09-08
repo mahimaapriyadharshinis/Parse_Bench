@@ -17,6 +17,9 @@ const Production GRAMMAR[] = {
     { NT_STATEMENT,  { N(NT_ASSIGNSTMT) },                                           1 },
     { NT_STATEMENT,  { N(NT_IFSTMT) },                                               1 },
     { NT_STATEMENT,  { N(NT_WHILESTMT) },                                            1 },
+    { NT_STATEMENT,  { N(NT_FORSTMT) },                                              1 },
+    { NT_STATEMENT,  { N(NT_BREAKSTMT) },                                            1 },
+    { NT_STATEMENT,  { N(NT_CONTINUESTMT) },                                         1 },
     { NT_STATEMENT,  { N(NT_BLOCK) },                                                1 },
     { NT_STATEMENT,  { N(NT_PRINTSTMT) },                                            1 },
 
@@ -33,6 +36,19 @@ const Production GRAMMAR[] = {
     { NT_WHILESTMT,  { T(TT_WHILE), T(TT_LPAREN), N(NT_COND), T(TT_RPAREN),
                        N(NT_BLOCK) },                                                5 },
 
+    { NT_FORSTMT,    { T(TT_FOR), T(TT_LPAREN), N(NT_FORINIT), T(TT_SEMI),
+                       N(NT_COND), T(TT_SEMI), N(NT_FORUPDATE), T(TT_RPAREN),
+                       N(NT_BLOCK) },                                                9 },
+
+    { NT_FORINIT,    { T(TT_ID), T(TT_ASSIGN), N(NT_EXPR) },                         3 },
+    { NT_FORINIT,    { EPS },                                                        1 },
+
+    { NT_FORUPDATE,  { T(TT_ID), T(TT_ASSIGN), N(NT_EXPR) },                         3 },
+    { NT_FORUPDATE,  { EPS },                                                        1 },
+
+    { NT_BREAKSTMT,    { T(TT_BREAK),    T(TT_SEMI) },                               2 },
+    { NT_CONTINUESTMT, { T(TT_CONTINUE), T(TT_SEMI) },                               2 },
+
     { NT_BLOCK,      { T(TT_LBRACE), N(NT_STMTLIST), T(TT_RBRACE) },                 3 },
 
     { NT_STMTLIST,   { N(NT_STATEMENT), N(NT_STMTLIST) },                            2 },
@@ -41,7 +57,20 @@ const Production GRAMMAR[] = {
     { NT_PRINTSTMT,  { T(TT_PRINT), T(TT_LPAREN), N(NT_EXPR), T(TT_RPAREN),
                        T(TT_SEMI) },                                                 5 },
 
-    { NT_COND,       { N(NT_EXPR), N(NT_RELOP), N(NT_EXPR) },                        3 },
+    { NT_COND,       { N(NT_ANDCOND), N(NT_ORCONDTAIL) },                            2 },
+
+    { NT_ORCONDTAIL, { T(TT_OR), N(NT_ANDCOND), N(NT_ORCONDTAIL) },                  3 },
+    { NT_ORCONDTAIL, { EPS },                                                        1 },
+
+    { NT_ANDCOND,    { N(NT_NOTCOND), N(NT_ANDCONDTAIL) },                           2 },
+
+    { NT_ANDCONDTAIL,{ T(TT_AND), N(NT_NOTCOND), N(NT_ANDCONDTAIL) },                3 },
+    { NT_ANDCONDTAIL,{ EPS },                                                        1 },
+
+    { NT_NOTCOND,    { T(TT_NOT), N(NT_NOTCOND) },                                   2 },
+    { NT_NOTCOND,    { N(NT_REL) },                                                  1 },
+
+    { NT_REL,        { N(NT_EXPR), N(NT_RELOP), N(NT_EXPR) },                        3 },
 
     { NT_RELOP,      { T(TT_LT) },                                                   1 },
     { NT_RELOP,      { T(TT_GT) },                                                   1 },
@@ -71,9 +100,11 @@ const int GRAMMAR_COUNT = (int)(sizeof GRAMMAR / sizeof GRAMMAR[0]);
 
 static const char *const NT_NAMES[NT_COUNT] = {
     "program", "statement", "declStmt", "assignStmt", "ifStmt",
-    "elsePart", "whileStmt", "block", "stmtList", "printStmt",
-    "cond", "relop", "expr", "exprTail", "term", "termTail",
-    "factor"
+    "elsePart", "whileStmt", "forStmt", "forInit", "forUpdate",
+    "breakStmt", "continueStmt", "block", "stmtList", "printStmt",
+    "cond", "orCondTail", "andCond", "andCondTail", "notCond",
+    "rel", "relop",
+    "expr", "exprTail", "term", "termTail", "factor"
 };
 
 TermSet g_first[NT_COUNT];

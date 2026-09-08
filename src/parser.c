@@ -49,6 +49,9 @@ const char *friendly_type(TokenType t)
     case TT_NUM:    return "a number";
     case TT_INT:    return "'int'";
     case TT_ELSE:   return "'else'";
+    case TT_FOR:    return "'for'";
+    case TT_BREAK:  return "'break'";
+    case TT_CONTINUE: return "'continue'";
     case TT_EOF:    return "the end of the file";
     default:        return token_type_name(t);
     }
@@ -234,9 +237,17 @@ static ParseNode *parse_assign_stmt(Parser *p);
 static ParseNode *parse_if_stmt(Parser *p);
 static ParseNode *parse_else_part(Parser *p);
 static ParseNode *parse_while_stmt(Parser *p);
+static ParseNode *parse_for_stmt(Parser *p);
+static ParseNode *parse_for_init(Parser *p);
+static ParseNode *parse_for_update(Parser *p);
+static ParseNode *parse_break_stmt(Parser *p);
+static ParseNode *parse_continue_stmt(Parser *p);
 static ParseNode *parse_block(Parser *p);
 static ParseNode *parse_print_stmt(Parser *p);
 static ParseNode *parse_cond(Parser *p);
+static ParseNode *parse_and_cond(Parser *p);
+static ParseNode *parse_not_cond(Parser *p);
+static ParseNode *parse_rel(Parser *p);
 static ParseNode *parse_relop(Parser *p);
 static ParseNode *parse_expr(Parser *p);
 static ParseNode *parse_term(Parser *p);
@@ -286,18 +297,21 @@ static void parse_stmt_sequence(Parser *p, ParseNode *n, TokenType terminator)
     }
 }
 
-/* -- statement -> declStmt | assignStmt | ifStmt | whileStmt
- *              | block | printStmt */
+/* -- statement -> declStmt | assignStmt | ifStmt | whileStmt | forStmt
+ *              | breakStmt | continueStmt | block | printStmt */
 static ParseNode *parse_statement(Parser *p)
 {
     switch (current(p)->type) {
-    case TT_INT:    return parse_decl_stmt(p);
-    case TT_ID:     return parse_assign_stmt(p);
-    case TT_IF:     return parse_if_stmt(p);
-    case TT_WHILE:  return parse_while_stmt(p);
-    case TT_LBRACE: return parse_block(p);
-    case TT_PRINT:  return parse_print_stmt(p);
-    default:        fail(p, "start of statement"); return NULL; /* not reached */
+    case TT_INT:      return parse_decl_stmt(p);
+    case TT_ID:       return parse_assign_stmt(p);
+    case TT_IF:       return parse_if_stmt(p);
+    case TT_WHILE:    return parse_while_stmt(p);
+    case TT_FOR:      return parse_for_stmt(p);
+    case TT_BREAK:    return parse_break_stmt(p);
+    case TT_CONTINUE: return parse_continue_stmt(p);
+    case TT_LBRACE:   return parse_block(p);
+    case TT_PRINT:    return parse_print_stmt(p);
+    default:          fail(p, "start of statement"); return NULL; /* not reached */
     }
 }
 
@@ -359,6 +373,66 @@ static ParseNode *parse_while_stmt(Parser *p)
     return n;
 }
 
+/* -- forStmt -> "for" "(" forInit ";" cond ";" forUpdate ")" block */
+static ParseNode *parse_for_stmt(Parser *p)
+{
+    ParseNode *n = node(p, "forStmt", 0);
+    add(p, n, leaf(p, advance(p)));        /* "for" */
+    add(p, n, expect(p, TT_LPAREN));
+    add(p, n, parse_for_init(p));
+    add(p, n, expect(p, TT_SEMI));
+    add(p, n, parse_cond(p));
+    add(p, n, expect(p, TT_SEMI));
+    add(p, n, parse_for_update(p));
+    add(p, n, expect(p, TT_RPAREN));
+    add(p, n, parse_block(p));
+    return n;
+}
+
+/* -- forInit -> ID "=" expr | EPSILON */
+static ParseNode *parse_for_init(Parser *p)
+{
+    if (check(p, TT_ID)) {
+        ParseNode *n = node(p, "forInit", 0);
+        add(p, n, leaf(p, advance(p)));
+        add(p, n, expect(p, TT_ASSIGN));
+        add(p, n, parse_expr(p));
+        return n;
+    }
+    return node(p, "forInit(\xce\xb5)", 0);   /* forInit(ε) */
+}
+
+/* -- forUpdate -> ID "=" expr | EPSILON */
+static ParseNode *parse_for_update(Parser *p)
+{
+    if (check(p, TT_ID)) {
+        ParseNode *n = node(p, "forUpdate", 0);
+        add(p, n, leaf(p, advance(p)));
+        add(p, n, expect(p, TT_ASSIGN));
+        add(p, n, parse_expr(p));
+        return n;
+    }
+    return node(p, "forUpdate(\xce\xb5)", 0); /* forUpdate(ε) */
+}
+
+/* -- breakStmt -> "break" ";" */
+static ParseNode *parse_break_stmt(Parser *p)
+{
+    ParseNode *n = node(p, "breakStmt", 0);
+    add(p, n, leaf(p, advance(p)));        /* "break" */
+    add(p, n, expect(p, TT_SEMI));
+    return n;
+}
+
+/* -- continueStmt -> "continue" ";" */
+static ParseNode *parse_continue_stmt(Parser *p)
+{
+    ParseNode *n = node(p, "continueStmt", 0);
+    add(p, n, leaf(p, advance(p)));        /* "continue" */
+    add(p, n, expect(p, TT_SEMI));
+    return n;
+}
+
 /* -- block -> "{" stmtList "}" */
 static ParseNode *parse_block(Parser *p)
 {
@@ -381,10 +455,52 @@ static ParseNode *parse_print_stmt(Parser *p)
     return n;
 }
 
-/* -- cond -> expr relop expr */
+/* -- cond -> andCond orCondTail   ("||"-chain, done iteratively like expr) */
 static ParseNode *parse_cond(Parser *p)
 {
+    ParseNode *left = parse_and_cond(p);
+    if (!check(p, TT_OR)) return left;     /* no "||": skip the wrapper node */
+
     ParseNode *n = node(p, "cond", 0);
+    add(p, n, left);
+    while (check(p, TT_OR)) {
+        add(p, n, leaf(p, advance(p)));
+        add(p, n, parse_and_cond(p));
+    }
+    return n;
+}
+
+/* -- andCond -> notCond andCondTail   ("&&"-chain, done iteratively) */
+static ParseNode *parse_and_cond(Parser *p)
+{
+    ParseNode *left = parse_not_cond(p);
+    if (!check(p, TT_AND)) return left;    /* no "&&": skip the wrapper node */
+
+    ParseNode *n = node(p, "andCond", 0);
+    add(p, n, left);
+    while (check(p, TT_AND)) {
+        add(p, n, leaf(p, advance(p)));
+        add(p, n, parse_not_cond(p));
+    }
+    return n;
+}
+
+/* -- notCond -> "!" notCond | rel */
+static ParseNode *parse_not_cond(Parser *p)
+{
+    if (check(p, TT_NOT)) {
+        ParseNode *n = node(p, "notCond", 0);
+        add(p, n, leaf(p, advance(p)));
+        add(p, n, parse_not_cond(p));      /* right-recursive: "!!!x" chains */
+        return n;
+    }
+    return parse_rel(p);
+}
+
+/* -- rel -> expr relop expr */
+static ParseNode *parse_rel(Parser *p)
+{
+    ParseNode *n = node(p, "rel", 0);
     add(p, n, parse_expr(p));
     add(p, n, parse_relop(p));
     add(p, n, parse_expr(p));

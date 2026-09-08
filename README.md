@@ -8,9 +8,12 @@ recovers from syntax errors instead of stopping at the first one.
 Written entirely in C99 — the analyzer and its frontend alike — with no external
 libraries. If you have a C compiler, you can build and run the whole project.
 
-No lexer is included by design — the analyzer's input is a token stream, not
-source text. See [Token-stream format](#token-stream-format) for how to write
-one.
+The analyzer's input is a token stream, not source text, by design — see
+[Token-stream format](#token-stream-format) for how to write one by hand. An
+optional convenience lexer (`--lex`) can also produce that format from real
+C-like source; see [Lexing source into a token stream](#lexing-source-into-a-token-stream).
+It's a separate, optional front-end — the analyzer itself never reads source
+text directly.
 
 **Repo:** https://github.com/mahimaapriyadharshinis/Parse_Bench
 
@@ -23,6 +26,7 @@ one.
 - [The terminal UI](#the-terminal-ui)
 - [Command line](#command-line)
 - [Token-stream format](#token-stream-format)
+- [Lexing source into a token stream](#lexing-source-into-a-token-stream)
 - [Project structure](#project-structure)
 - [Testing](#testing)
 
@@ -31,7 +35,7 @@ one.
 - **Algorithmic grammar analysis** — FIRST sets, FOLLOW sets, and the LL(1)
   parsing table are computed by generic fixed-point algorithms over bitsets,
   not hand-filled, and the construction proves the grammar is genuinely LL(1)
-  (75 conflict-free table entries)
+  (117 conflict-free table entries)
 - **Recursive-descent parser** — one function per grammar rule, with
   human-readable error messages instead of raw token dumps
 - **Two syntax-error recovery strategies** working together — phrase-level (a
@@ -45,9 +49,10 @@ one.
 - **A full-screen terminal UI in plain C** — no curses, no dependencies, just
   ANSI escape sequences; all the Windows/POSIX differences are confined to one
   small file ([src/term.c](src/term.c))
-- **21 automated tests** covering valid programs, syntax errors, and edge cases
-  (including a watchdog-guarded regression test for a panic-mode infinite-loop
-  bug that was found and fixed during development)
+- **40 automated tests** covering valid programs, syntax errors, edge cases,
+  `for`/`break`/`continue`, `&&`/`||`/`!` conditions, and the optional lexer
+  (including a watchdog-guarded regression test for a panic-mode
+  infinite-loop bug that was found and fixed during development)
 - **Zero dependencies** — C99 and the standard library, nothing else
 
 ## Getting started
@@ -63,7 +68,7 @@ BrechtSanders.WinLibs.POSIX.UCRT` installs one (gcc + `mingw32-make`); open a
 ```sh
 make          # build build/parsebench
 make run      # build and launch the terminal UI
-make test     # build and run the 21-test suite
+make test     # build and run the 40-test suite
 make grammar  # print the FIRST/FOLLOW sets and the LL(1) table
 make clean
 ```
@@ -93,19 +98,38 @@ piped or redirected to a file. Batch mode (`--cli`) pipes and redirects fine.
 
 ```
 program     -> statement*
-statement   -> declStmt | assignStmt | ifStmt | whileStmt | block | printStmt
+statement   -> declStmt | assignStmt | ifStmt | whileStmt | forStmt
+             | breakStmt | continueStmt | block | printStmt
 declStmt    -> "int" ID ";"
 assignStmt  -> ID "=" expr ";"
 ifStmt      -> "if" "(" cond ")" block ( "else" block )?
 whileStmt   -> "while" "(" cond ")" block
+forStmt     -> "for" "(" forInit ";" cond ";" forUpdate ")" block
+forInit     -> (ID "=" expr)?
+forUpdate   -> (ID "=" expr)?
+breakStmt   -> "break" ";"
+continueStmt -> "continue" ";"
 block       -> "{" statement* "}"
 printStmt   -> "print" "(" expr ")" ";"
-cond        -> expr relop expr
+cond        -> andCond ("||" andCond)*
+andCond     -> notCond ("&&" notCond)*
+notCond     -> "!" notCond | rel
+rel         -> expr relop expr
 relop       -> "<" | ">" | "<=" | ">=" | "==" | "!="
 expr        -> term (("+"|"-") term)*
 term        -> factor (("*"|"/") factor)*
 factor      -> ID | NUM | "(" expr ")"
 ```
+
+`!` binds tighter than `&&`, which binds tighter than `||` — the usual
+precedence — so most conditions never need grouping. One thing this grammar
+deliberately does *not* support: parenthesizing a whole condition, e.g.
+`!(a < b)` or `(a < b) && (c < d)`. `rel`'s `expr relop expr` already claims
+`(` (via `factor -> "(" expr ")"`), so a `"(" cond ")"` alternative would be
+a second production starting with `(` — a FIRST/FIRST conflict, which would
+break the LL(1) proof. Write `!a < b` instead (no parens needed); to combine
+independently-parenthesized comparisons, just chain them with `&&`/`||`
+directly, e.g. `a < b && c < d`.
 
 See [GRAMMAR.md](GRAMMAR.md) for the full reference: this EBNF form, the
 pure-BNF form the algorithms actually run on, the terminal/non-terminal lists,
@@ -193,7 +217,7 @@ and the computed FIRST/FOLLOW sets for every rule.
 |---|---|
 | **1 Analyze** | The token stream, the finished parse tree, and every recovered error |
 | **2 Walkthrough** | The same panes, replayed step by step as the parser built them |
-| **3 Grammar** | All 36 BNF productions, both FIRST and FOLLOW sets, and all 75 LL(1) table entries |
+| **3 Grammar** | All 54 BNF productions, both FIRST and FOLLOW sets, and all 117 LL(1) table entries |
 | **4 Input** | Load a built-in sample or open a token-stream file |
 
 | Key | Action |
@@ -217,11 +241,13 @@ parsebench --cli [NAMES...]   run built-in samples, print the results
 parsebench --cli --file FILE  run a token-stream file, print the results
 parsebench --cli --stdin      read a token stream from stdin
 parsebench --cli --dot ...    also write parse_tree_<name>.dot
+parsebench --lex FILE [-o OUT]  convert C-like source into the token-stream format
+parsebench --lex --stdin      ...reading the source from stdin instead
 parsebench --grammar          print FIRST/FOLLOW sets and the LL(1) table
 parsebench --help
 ```
 
-Built-in samples: `valid`, `valid_if`, `invalid`, `empty`.
+Built-in samples: `valid`, `valid_if`, `control_flow`, `invalid`, `empty`.
 
 With `--file` or `--stdin`, batch mode exits non-zero when the input had syntax
 errors, so it drops straight into a script or a CI check. (Running the built-in
@@ -247,16 +273,41 @@ RBRACE                                               # }
 ```
 
 The valid type names are the `TokenType` enum in [src/token.h](src/token.h):
-`INT IF ELSE WHILE PRINT ID NUM ASSIGN PLUS MINUS STAR SLASH LT GT LE GE EQ NE
-LPAREN RPAREN LBRACE RBRACE SEMI EOF`.
+`INT IF ELSE WHILE PRINT FOR BREAK CONTINUE ID NUM ASSIGN PLUS MINUS STAR
+SLASH LT GT LE GE EQ NE AND OR NOT LPAREN RPAREN LBRACE RBRACE SEMI EOF`.
 
 See [examples/custom.tokens](examples/custom.tokens) for a complete file.
+
+## Lexing source into a token stream
+
+Writing `INT ID(count) SEMI` by hand gets old, so `--lex` converts real
+C-like source (the grammar above, plus `//` and `/* */` comments) into the
+token-stream format for you:
+
+```sh
+build\parsebench.exe --lex prog.c -o prog.tokens
+build\parsebench.exe prog.tokens
+```
+
+Or skip the intermediate file and pipe it straight into batch mode:
+
+```sh
+build\parsebench.exe --lex prog.c | build\parsebench.exe --cli --stdin
+```
+
+This is a separate, optional front-end ([src/lexer.c](src/lexer.c),
+~165 lines) that sits in front of the token-stream interface — it doesn't
+change what the analyzer itself consumes, and hand-written token-stream
+files work exactly as before. On an unrecognized character or an
+unterminated block comment, `--lex` reports the offending line and exits
+non-zero rather than guessing.
 
 ## Project structure
 
 ```
 src/
-  token.h/.c        TokenType, Token, and the token-stream text reader
+  token.h/.c        TokenType, Token, and the token-stream text reader/writer
+  lexer.h/.c        optional: lexes C-like source text into a TokenStream
   grammar.h/.c      the BNF grammar, FIRST/FOLLOW, and the LL(1) table
   parse_tree.h/.c   the arena, the n-ary tree, and the text/DOT renderers
   parser.h/.c       the recursive-descent parser and error recovery
@@ -268,7 +319,7 @@ src/
 tests/
   minitest.h        a ~60-line test harness, so no framework is needed
   watchdog.h/.c     a wall-clock timeout for the infinite-loop regression test
-  test_main.c       all 21 tests
+  test_main.c       all 40 tests
 examples/
   custom.tokens     a sample token-stream file
 Makefile
@@ -287,12 +338,12 @@ make test
 ok    test_decl_assign_print_has_no_errors
 ok    test_if_else_has_no_errors
 ...
-ok    test_full_custom_stream_parses_cleanly_end_to_end
+ok    test_lexer_output_for_loop_with_break_and_and_parses_cleanly
 
-21 tests, 0 failed
+40 tests, 0 failed
 ```
 
-The suite covers four areas:
+The suite covers six areas:
 
 - **Valid programs** (4) — declarations, assignments, `if`/`else`, `while`,
   nested parenthesized expressions
@@ -303,6 +354,12 @@ The suite covers four areas:
   LL(1) table's own conflict check
 - **Token-stream format** (6) — default lexemes, line-number tracking,
   comments, and both error cases
+- **`for`/`break`/`continue`, `&&`/`||`/`!`** (7) — loops with and without
+  init/update, nested break/continue, `&&`/`||` precedence and tree shape,
+  bare `!`, and the documented parenthesized-condition rejection
+- **Lexer** (12) — token/line correctness, comments, two-character and
+  logical operators, all error cases, and round trips through the text
+  format into the parser
 
 The stray-`}` test is guarded by a watchdog thread: that bug made the parser
 spin forever rather than return a wrong answer, so the test arms a five-second
