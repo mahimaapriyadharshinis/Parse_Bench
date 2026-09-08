@@ -27,17 +27,17 @@ const Production GRAMMAR[] = {
 
     { NT_ASSIGNSTMT, { T(TT_ID), T(TT_ASSIGN), N(NT_EXPR), T(TT_SEMI) },             4 },
 
-    { NT_IFSTMT,     { T(TT_IF), T(TT_LPAREN), N(NT_COND), T(TT_RPAREN),
+    { NT_IFSTMT,     { T(TT_IF), T(TT_LPAREN), N(NT_EXPR), T(TT_RPAREN),
                        N(NT_BLOCK), N(NT_ELSEPART) },                                6 },
 
     { NT_ELSEPART,   { T(TT_ELSE), N(NT_BLOCK) },                                    2 },
     { NT_ELSEPART,   { EPS },                                                        1 },
 
-    { NT_WHILESTMT,  { T(TT_WHILE), T(TT_LPAREN), N(NT_COND), T(TT_RPAREN),
+    { NT_WHILESTMT,  { T(TT_WHILE), T(TT_LPAREN), N(NT_EXPR), T(TT_RPAREN),
                        N(NT_BLOCK) },                                                5 },
 
     { NT_FORSTMT,    { T(TT_FOR), T(TT_LPAREN), N(NT_FORINIT), T(TT_SEMI),
-                       N(NT_COND), T(TT_SEMI), N(NT_FORUPDATE), T(TT_RPAREN),
+                       N(NT_EXPR), T(TT_SEMI), N(NT_FORUPDATE), T(TT_RPAREN),
                        N(NT_BLOCK) },                                                9 },
 
     { NT_FORINIT,    { T(TT_ID), T(TT_ASSIGN), N(NT_EXPR) },                         3 },
@@ -57,20 +57,28 @@ const Production GRAMMAR[] = {
     { NT_PRINTSTMT,  { T(TT_PRINT), T(TT_LPAREN), N(NT_EXPR), T(TT_RPAREN),
                        T(TT_SEMI) },                                                 5 },
 
-    { NT_COND,       { N(NT_ANDCOND), N(NT_ORCONDTAIL) },                            2 },
+    /* expr is a single unified precedence chain (loosest to tightest: ||,
+     * &&, relop, +/-, * //, unary !/-, factor) -- comparisons and logical
+     * combinations are just more operators over int-valued expressions,
+     * exactly like real C, rather than a separate "condition" grammar.
+     * That's also what makes "(" ... ")" grouping work everywhere,
+     * including around a whole condition: factor's "(" expr ")" already
+     * accepts the full chain. */
 
-    { NT_ORCONDTAIL, { T(TT_OR), N(NT_ANDCOND), N(NT_ORCONDTAIL) },                  3 },
-    { NT_ORCONDTAIL, { EPS },                                                        1 },
+    { NT_EXPR,       { N(NT_ANDEXPR), N(NT_ORTAIL) },                                2 },
 
-    { NT_ANDCOND,    { N(NT_NOTCOND), N(NT_ANDCONDTAIL) },                           2 },
+    { NT_ORTAIL,     { T(TT_OR), N(NT_ANDEXPR), N(NT_ORTAIL) },                      3 },
+    { NT_ORTAIL,     { EPS },                                                        1 },
 
-    { NT_ANDCONDTAIL,{ T(TT_AND), N(NT_NOTCOND), N(NT_ANDCONDTAIL) },                3 },
-    { NT_ANDCONDTAIL,{ EPS },                                                        1 },
+    { NT_ANDEXPR,    { N(NT_RELEXPR), N(NT_ANDTAIL) },                               2 },
 
-    { NT_NOTCOND,    { T(TT_NOT), N(NT_NOTCOND) },                                   2 },
-    { NT_NOTCOND,    { N(NT_REL) },                                                  1 },
+    { NT_ANDTAIL,    { T(TT_AND), N(NT_RELEXPR), N(NT_ANDTAIL) },                    3 },
+    { NT_ANDTAIL,    { EPS },                                                        1 },
 
-    { NT_REL,        { N(NT_EXPR), N(NT_RELOP), N(NT_EXPR) },                        3 },
+    { NT_RELEXPR,    { N(NT_ADDEXPR), N(NT_RELTAIL) },                               2 },
+
+    { NT_RELTAIL,    { N(NT_RELOP), N(NT_ADDEXPR), N(NT_RELTAIL) },                  3 },
+    { NT_RELTAIL,    { EPS },                                                        1 },
 
     { NT_RELOP,      { T(TT_LT) },                                                   1 },
     { NT_RELOP,      { T(TT_GT) },                                                   1 },
@@ -79,17 +87,21 @@ const Production GRAMMAR[] = {
     { NT_RELOP,      { T(TT_EQ) },                                                   1 },
     { NT_RELOP,      { T(TT_NE) },                                                   1 },
 
-    { NT_EXPR,       { N(NT_TERM), N(NT_EXPRTAIL) },                                 2 },
+    { NT_ADDEXPR,    { N(NT_MULEXPR), N(NT_ADDTAIL) },                               2 },
 
-    { NT_EXPRTAIL,   { T(TT_PLUS),  N(NT_TERM), N(NT_EXPRTAIL) },                    3 },
-    { NT_EXPRTAIL,   { T(TT_MINUS), N(NT_TERM), N(NT_EXPRTAIL) },                    3 },
-    { NT_EXPRTAIL,   { EPS },                                                        1 },
+    { NT_ADDTAIL,    { T(TT_PLUS),  N(NT_MULEXPR), N(NT_ADDTAIL) },                  3 },
+    { NT_ADDTAIL,    { T(TT_MINUS), N(NT_MULEXPR), N(NT_ADDTAIL) },                  3 },
+    { NT_ADDTAIL,    { EPS },                                                        1 },
 
-    { NT_TERM,       { N(NT_FACTOR), N(NT_TERMTAIL) },                               2 },
+    { NT_MULEXPR,    { N(NT_UNARY), N(NT_MULTAIL) },                                 2 },
 
-    { NT_TERMTAIL,   { T(TT_STAR),  N(NT_FACTOR), N(NT_TERMTAIL) },                  3 },
-    { NT_TERMTAIL,   { T(TT_SLASH), N(NT_FACTOR), N(NT_TERMTAIL) },                  3 },
-    { NT_TERMTAIL,   { EPS },                                                        1 },
+    { NT_MULTAIL,    { T(TT_STAR),  N(NT_UNARY), N(NT_MULTAIL) },                    3 },
+    { NT_MULTAIL,    { T(TT_SLASH), N(NT_UNARY), N(NT_MULTAIL) },                    3 },
+    { NT_MULTAIL,    { EPS },                                                        1 },
+
+    { NT_UNARY,      { T(TT_NOT),   N(NT_UNARY) },                                   2 },
+    { NT_UNARY,      { T(TT_MINUS), N(NT_UNARY) },                                   2 },
+    { NT_UNARY,      { N(NT_FACTOR) },                                               1 },
 
     { NT_FACTOR,     { T(TT_ID) },                                                   1 },
     { NT_FACTOR,     { T(TT_NUM) },                                                  1 },
@@ -102,9 +114,9 @@ static const char *const NT_NAMES[NT_COUNT] = {
     "program", "statement", "declStmt", "assignStmt", "ifStmt",
     "elsePart", "whileStmt", "forStmt", "forInit", "forUpdate",
     "breakStmt", "continueStmt", "block", "stmtList", "printStmt",
-    "cond", "orCondTail", "andCond", "andCondTail", "notCond",
-    "rel", "relop",
-    "expr", "exprTail", "term", "termTail", "factor"
+    "expr", "orTail", "andExpr", "andTail", "relExpr", "relTail",
+    "addExpr", "addTail", "mulExpr", "mulTail", "unary", "factor",
+    "relop"
 };
 
 TermSet g_first[NT_COUNT];

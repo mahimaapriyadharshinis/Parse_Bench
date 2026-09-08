@@ -29,23 +29,23 @@ statement   -> declStmt | assignStmt | ifStmt | whileStmt | forStmt
              | breakStmt | continueStmt | block | printStmt
 declStmt    -> "int" ID ";"
 assignStmt  -> ID "=" expr ";"
-ifStmt      -> "if" "(" cond ")" block ( "else" block )?
-whileStmt   -> "while" "(" cond ")" block
-forStmt     -> "for" "(" forInit ";" cond ";" forUpdate ")" block
+ifStmt      -> "if" "(" expr ")" block ( "else" block )?
+whileStmt   -> "while" "(" expr ")" block
+forStmt     -> "for" "(" forInit ";" expr ";" forUpdate ")" block
 forInit     -> (ID "=" expr)?
 forUpdate   -> (ID "=" expr)?
 breakStmt   -> "break" ";"
 continueStmt -> "continue" ";"
 block       -> "{" statement* "}"
 printStmt   -> "print" "(" expr ")" ";"
-cond        -> andCond ("||" andCond)*
-andCond     -> notCond ("&&" notCond)*
-notCond     -> "!" notCond | rel
-rel         -> expr relop expr
-relop       -> "<" | ">" | "<=" | ">=" | "==" | "!="
-expr        -> term (("+"|"-") term)*
-term        -> factor (("*"|"/") factor)*
+expr        -> andExpr ("||" andExpr)*
+andExpr     -> relExpr ("&&" relExpr)*
+relExpr     -> addExpr (relop addExpr)*
+addExpr     -> mulExpr (("+"|"-") mulExpr)*
+mulExpr     -> unary (("*"|"/") unary)*
+unary       -> "!" unary | "-" unary | factor
 factor      -> ID | NUM | "(" expr ")"
+relop       -> "<" | ">" | "<=" | ">=" | "==" | "!="
 ```
 
 **Reading it in words:**
@@ -55,38 +55,46 @@ factor      -> ID | NUM | "(" expr ")"
   `while`, a `for`, a `break`, a `continue`, a `{ ... }` block, or a `print`.
 - A **declaration** (`declStmt`) is `int`, then a name, then `;` — e.g. `int x;`
 - An **assignment** is a name, `=`, an expression, `;` — e.g. `x = 1 + 2;`
-- An **if** is `if (condition) block`, with an optional `else block`.
-- A **while** is `while (condition) block`.
-- A **for** is `for (init; condition; update) block`, where `init` and
-  `update` are each an optional single assignment (no `;` after `update`,
-  since the loop's own `)` follows it) — e.g. `for (i = 0; i < 10; i = i + 1)`.
+- An **if** is `if (expr) block`, with an optional `else block`.
+- A **while** is `while (expr) block`.
+- A **for** is `for (init; expr; update) block`, where `init` and `update`
+  are each an optional single assignment (no `;` after `update`, since the
+  loop's own `)` follows it) — e.g. `for (i = 0; i < 10; i = i + 1)`.
 - A **break** / **continue** is just the keyword and a `;`. (This is a pure
   syntax analyzer — there's no semantic check that a `break`/`continue`
   actually sits inside a loop.)
 - A **block** is `{`, any number of statements, `}`.
 - A **print** is `print(expression);`
-- A **condition** (`cond`) is one or more `andCond`s joined by `||`
-  (left to right) — e.g. `x < 10 || y > 2`
-- An **andCond** is one or more `notCond`s joined by `&&` (left to right) —
-  e.g. `x < 10 && y > 2`
-- A **notCond** is `!` in front of another `notCond` (so `!!x<1` chains), or
-  just a `rel`. `!` binds tighter than `&&`, which binds tighter than `||` —
-  the usual precedence, so `!a < b && c < d` means `(!(a < b)) && (c < d)`.
-- A **rel** is `expression relop expression` — e.g. `x < 10`
-- A **relop** is one comparison operator: `< > <= >= == !=`
-- An **expr**ession is one or more `term`s joined by `+`/`-` (left to right).
-- A **term** is one or more `factor`s joined by `*`/`/` (left to right).
-- A **factor** is a name, a number, or a parenthesized expression.
 
-**A deliberate limitation:** conditions cannot be grouped in parentheses —
-`!(a < b)` and `(a < b) && (c < d)` are not in the language; write `!a < b`
-and `a < b && c < d` instead (no parens needed, since precedence already
-does the grouping). `rel`'s `expr relop expr` already claims `(` as the start
-of an arithmetic sub-expression (via `factor -> "(" expr ")"`); adding
-`"(" cond ")"` as another alternative would make two productions start with
-`(`, a FIRST/FIRST conflict that breaks the LL(1) proof in section 7. Keeping
-the grammar genuinely LL(1) — provable by construction, not just "seems to
-work" — was judged more valuable than parenthesized condition grouping.
+**`expr` is a single unified precedence chain, not a separate "condition"
+grammar** — exactly like real C, where a comparison or a logical combination
+is just another int-valued expression, usable anywhere `expr` is expected
+(so `if (x)`, `while (1)`, `x = a < b;`, and `print(!x);` are all valid).
+Loosest to tightest precedence:
+
+- **expr** is one or more `andExpr`s joined by `||` (left to right).
+- **andExpr** is one or more `relExpr`s joined by `&&` (left to right).
+- **relExpr** is one or more `addExpr`s joined by a `relop` (left to right —
+  so `a < b < c` is syntactically valid, same as real C, even though as a
+  *value* it means `(a < b) < c`, not a mathematical range check).
+- **addExpr** is one or more `mulExpr`s joined by `+`/`-` (left to right).
+- **mulExpr** is one or more `unary`s joined by `*`/`/` (left to right).
+- **unary** is `!` or `-` in front of another `unary` (so `!!x`, `--x` chain),
+  or just a `factor`.
+- **factor** is a name, a number, or a parenthesized `expr` — and because
+  it's the *only* place `(` appears in the grammar, and it accepts the full
+  chain above recursively, parenthesizing a whole condition works too:
+  `!(a < b)`, `(a < b) && (c < d)`, nested arbitrarily deep.
+- **relop** is one comparison operator: `< > <= >= == !=`
+
+An earlier version of this grammar kept a separate `cond` rule
+(`cond -> andCond ("||" andCond)*`, ultimately bottoming out at
+`rel -> expr relop expr`) on top of a *different* `expr` that only covered
+arithmetic. That meant `factor`'s `"(" expr ")"` and a hypothetical
+`"(" cond ")"` would both start with `(` — a FIRST/FIRST conflict, which is
+why parenthesized conditions used to be rejected. Unifying `cond` into `expr`
+removed the conflict at the source instead of working around it, so the
+grammar is still mechanically proven LL(1) — see section 7.
 
 ## 2. Pure-BNF grammar (what the code parses)
 
@@ -94,7 +102,8 @@ work" — was judged more valuable than parenthesized condition grouping.
 `?` repetition operators are first expanded by hand into plain, right-recursive
 rules with explicit epsilon (`ε` — "produces nothing") productions, because the
 classic FIRST/FOLLOW/LL(1)-table algorithms are defined over pure BNF, not EBNF.
-This is the actual `GRAMMAR` table in [src/grammar.c](src/grammar.c):
+This is the actual `GRAMMAR` table in [src/grammar.c](src/grammar.c) (printed
+directly by `parsebench --grammar`):
 
 ```
 program      -> statement program | ε
@@ -113,13 +122,13 @@ declStmt     -> "int" ID ";"
 
 assignStmt   -> ID "=" expr ";"
 
-ifStmt       -> "if" "(" cond ")" block elsePart
+ifStmt       -> "if" "(" expr ")" block elsePart
 
 elsePart     -> "else" block | ε
 
-whileStmt    -> "while" "(" cond ")" block
+whileStmt    -> "while" "(" expr ")" block
 
-forStmt      -> "for" "(" forInit ";" cond ";" forUpdate ")" block
+forStmt      -> "for" "(" forInit ";" expr ";" forUpdate ")" block
 
 forInit      -> ID "=" expr | ε
 
@@ -135,27 +144,29 @@ stmtList     -> statement stmtList | ε
 
 printStmt    -> "print" "(" expr ")" ";"
 
-cond         -> andCond orCondTail
+expr         -> andExpr orTail
 
-orCondTail   -> "||" andCond orCondTail | ε
+orTail       -> "||" andExpr orTail | ε
 
-andCond      -> notCond andCondTail
+andExpr      -> relExpr andTail
 
-andCondTail  -> "&&" notCond andCondTail | ε
+andTail      -> "&&" relExpr andTail | ε
 
-notCond      -> "!" notCond | rel
+relExpr      -> addExpr relTail
 
-rel          -> expr relop expr
+relTail      -> relop addExpr relTail | ε
 
 relop        -> "<" | ">" | "<=" | ">=" | "==" | "!="
 
-expr         -> term exprTail
+addExpr      -> mulExpr addTail
 
-exprTail     -> "+" term exprTail | "-" term exprTail | ε
+addTail      -> "+" mulExpr addTail | "-" mulExpr addTail | ε
 
-term         -> factor termTail
+mulExpr      -> unary mulTail
 
-termTail     -> "*" factor termTail | "/" factor termTail | ε
+mulTail      -> "*" unary mulTail | "/" unary mulTail | ε
+
+unary        -> "!" unary | "-" unary | factor
 
 factor       -> ID | NUM | "(" expr ")"
 ```
@@ -168,10 +179,11 @@ factor       -> ID | NUM | "(" expr ")"
 | `statement*` in `block` | new rule `stmtList -> statement stmtList \| ε` | same idea, factored out since `block` also needs the `{ }` |
 | `("else" block)?` | new rule `elsePart -> "else" block \| ε` | "optional" becomes "or nothing" |
 | `(ID "=" expr)?` in `forInit`/`forUpdate` | `forInit -> ID "=" expr \| ε` (and the same for `forUpdate`) | same idea |
-| `(("+"\|"-") term)*` | new rule `exprTail -> "+" term exprTail \| "-" term exprTail \| ε` | repetition becomes right recursion |
-| `(("*"\|"/") factor)*` | new rule `termTail -> "*" factor termTail \| "/" factor termTail \| ε` | same |
-| `("\|\|" andCond)*` in `cond` | new rule `orCondTail -> "\|\|" andCond orCondTail \| ε` | same |
-| `("&&" notCond)*` in `andCond` | new rule `andCondTail -> "&&" notCond andCondTail \| ε` | same |
+| `("\|\|" andExpr)*` in `expr` | new rule `orTail -> "\|\|" andExpr orTail \| ε` | repetition becomes right recursion |
+| `("&&" relExpr)*` in `andExpr` | new rule `andTail -> "&&" relExpr andTail \| ε` | same |
+| `(relop addExpr)*` in `relExpr` | new rule `relTail -> relop addExpr relTail \| ε` | same |
+| `(("+"\|"-") mulExpr)*` in `addExpr` | new rule `addTail -> "+" mulExpr addTail \| "-" mulExpr addTail \| ε` | same |
+| `(("*"\|"/") unary)*` in `mulExpr` | new rule `mulTail -> "*" unary mulTail \| "/" unary mulTail \| ε` | same |
 
 No left recursion exists anywhere in the grammar (left recursion would break a
 top-down/recursive-descent parser), and every rule was already written this way
@@ -179,15 +191,16 @@ by design — nothing had to be eliminated, only the repetition operators
 expanded.
 
 The hand-written recursive-descent parser in [src/parser.c](src/parser.c)
-takes one liberty with `exprTail`/`termTail`/`orCondTail`/`andCondTail`: since
-each is just "zero or more repetitions of an operator and an operand," the
-parser folds each pair (tail nonterminal + its owning rule) into a single
-iterative `while` loop rather than writing a separate function per tail
-nonterminal — the same shape a hand-written parser would use, and exactly
-equivalent to the right-recursion above. `cond` and `andCond` additionally
-skip building their own wrapper tree node when the corresponding operator
-never appears (e.g. a plain `x < 10` produces just a `rel` node, not
-`cond -> andCond -> notCond -> rel` four nodes deep) — the same passthrough
+takes one liberty with the `*Tail` nonterminals: since each is just "zero or
+more repetitions of an operator and an operand," the parser folds each pair
+(tail nonterminal + its owning rule) into a single iterative `while` loop
+rather than writing a separate function per tail nonterminal — the same shape
+a hand-written parser would use, and exactly equivalent to the right
+recursion above. `expr`, `andExpr`, and `relExpr` additionally skip building
+their own wrapper tree node when the corresponding operator never appears
+(e.g. a plain `x < 10` produces just a `relExpr` node, not
+`expr -> andExpr -> relExpr` three nodes deep, and a bare `x` collapses all
+the way down to a single `factor` leaf) — the same passthrough
 `parse_statement` already uses for picking one of several alternatives.
 
 ## 3. Terminals (tokens)
@@ -205,16 +218,24 @@ The literal symbols the grammar is built from — every one is a member of
 | Punctuation | `LPAREN` (`(`), `RPAREN` (`)`), `LBRACE` (`{`), `RBRACE` (`}`), `SEMI` (`;`) |
 | End marker | `EOF` |
 
+Note `MINUS` and `NOT` each do double duty: `MINUS` is both the binary `-`
+in `addTail` and the unary `-` in `unary`; `NOT` is only ever unary. The
+grammar disambiguates by *position*, not by a different token — a hand-written
+recursive-descent parser only ever checks for `MINUS` at the start of a new
+`unary` (unary reading) or after a complete `mulExpr` while deciding whether
+`addTail`'s loop continues (binary reading), never both at once, so there's
+no ambiguity despite the shared token.
+
 ## 4. Non-terminals
 
-The 27 grammar symbols that expand into other symbols (the `NonTerm` enum in
+The 28 grammar symbols that expand into other symbols (the `NonTerm` enum in
 [src/grammar.h](src/grammar.h)), with the start symbol marked:
 
 ```
 program (start symbol), statement, declStmt, assignStmt, ifStmt, elsePart,
 whileStmt, forStmt, forInit, forUpdate, breakStmt, continueStmt, block,
-stmtList, printStmt, cond, orCondTail, andCond, andCondTail, notCond, rel,
-relop, expr, exprTail, term, termTail, factor
+stmtList, printStmt, expr, orTail, andExpr, andTail, relExpr, relTail,
+addExpr, addTail, mulExpr, mulTail, unary, factor, relop
 ```
 
 ## 5. FIRST sets
@@ -240,18 +261,19 @@ fixed-point algorithm in `compute_first_sets()` — not hand-filled.
 | `block` | `{` |
 | `stmtList` | `int, if, while, print, for, break, continue, ID, {, ε` |
 | `printStmt` | `print` |
-| `cond` | `ID, NUM, !, (` |
-| `orCondTail` | `\|\|, ε` |
-| `andCond` | `ID, NUM, !, (` |
-| `andCondTail` | `&&, ε` |
-| `notCond` | `ID, NUM, !, (` |
-| `rel` | `ID, NUM, (` |
-| `relop` | `<, >, <=, >=, ==, !=` |
-| `expr` | `ID, NUM, (` |
-| `exprTail` | `+, -, ε` |
-| `term` | `ID, NUM, (` |
-| `termTail` | `*, /, ε` |
+| `expr` | `ID, NUM, -, !, (` |
+| `orTail` | `\|\|, ε` |
+| `andExpr` | `ID, NUM, -, !, (` |
+| `andTail` | `&&, ε` |
+| `relExpr` | `ID, NUM, -, !, (` |
+| `relTail` | `<, >, <=, >=, ==, !=, ε` |
+| `addExpr` | `ID, NUM, -, !, (` |
+| `addTail` | `+, -, ε` |
+| `mulExpr` | `ID, NUM, -, !, (` |
+| `mulTail` | `*, /, ε` |
+| `unary` | `ID, NUM, -, !, (` |
 | `factor` | `ID, NUM, (` |
+| `relop` | `<, >, <=, >=, ==, !=` |
 
 ## 6. FOLLOW sets
 
@@ -276,31 +298,33 @@ Computed by the fixed-point algorithm in `compute_follow_sets()`.
 | `block` | `int, if, else, while, print, for, break, continue, ID, {, }, EOF` |
 | `stmtList` | `}` |
 | `printStmt` | `int, if, while, print, for, break, continue, ID, {, }, EOF` |
-| `cond` | `), ;` |
-| `orCondTail` | `), ;` |
-| `andCond` | `\|\|, ), ;` |
-| `andCondTail` | `\|\|, ), ;` |
-| `notCond` | `&&, \|\|, ), ;` |
-| `rel` | `&&, \|\|, ), ;` |
-| `relop` | `ID, NUM, (` |
-| `expr` | `<, >, <=, >=, ==, !=, &&, \|\|, ), ;` |
-| `exprTail` | `<, >, <=, >=, ==, !=, &&, \|\|, ), ;` |
-| `term` | `+, -, <, >, <=, >=, ==, !=, &&, \|\|, ), ;` |
-| `termTail` | `+, -, <, >, <=, >=, ==, !=, &&, \|\|, ), ;` |
+| `expr` | `), ;` |
+| `orTail` | `), ;` |
+| `andExpr` | `\|\|, ), ;` |
+| `andTail` | `\|\|, ), ;` |
+| `relExpr` | `&&, \|\|, ), ;` |
+| `relTail` | `&&, \|\|, ), ;` |
+| `addExpr` | `<, >, <=, >=, ==, !=, &&, \|\|, ), ;` |
+| `addTail` | `<, >, <=, >=, ==, !=, &&, \|\|, ), ;` |
+| `mulExpr` | `+, -, <, >, <=, >=, ==, !=, &&, \|\|, ), ;` |
+| `mulTail` | `+, -, <, >, <=, >=, ==, !=, &&, \|\|, ), ;` |
+| `unary` | `+, -, *, /, <, >, <=, >=, ==, !=, &&, \|\|, ), ;` |
 | `factor` | `+, -, *, /, <, >, <=, >=, ==, !=, &&, \|\|, ), ;` |
+| `relop` | `ID, NUM, -, !, (` |
 
 ## 7. LL(1) parsing table
 
 `build_ll1_table()` combines FIRST and FOLLOW into a table of
-`(non-terminal, next token) -> production to use`. It fills **117
+`(non-terminal, next token) -> production to use`. It fills **136
 conflict-free entries** for this grammar — and if any cell were ever written
-twice (a FIRST/FIRST or FIRST/FOLLOW conflict), table construction raises a
-an error immediately rather than silently overwriting it. That the table
-builds without error *is* the proof that this grammar is genuinely LL(1): a
-parser can always decide which production to use by looking at just one token
-of lookahead, with no backtracking and no ambiguity. (This is also exactly
-why parenthesized condition grouping was left out — see section 1 — adding it
-the naive way is the one change that *does* fail this check.)
+twice (a FIRST/FIRST or FIRST/FOLLOW conflict), table construction raises an
+error immediately rather than silently overwriting it. That the table builds
+without error *is* the proof that this grammar is genuinely LL(1): a parser
+can always decide which production to use by looking at just one token of
+lookahead, with no backtracking and no ambiguity — including now that `expr`
+covers everything `cond` used to and adds parenthesized grouping on top,
+since the unification (section 1) removed the conflict a naive
+`"(" cond ")"` addition would have caused, rather than papering over it.
 
-The full 117-entry table is `g_table` at runtime; print it with
+The full 136-entry table is `g_table` at runtime; print it with
 `parsebench --grammar`, or browse it in the terminal UI's Grammar tab.

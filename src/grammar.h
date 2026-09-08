@@ -8,23 +8,30 @@
  *                  | breakStmt | continueStmt | block | printStmt
  *     declStmt    -> "int" ID ";"
  *     assignStmt  -> ID "=" expr ";"
- *     ifStmt      -> "if" "(" cond ")" block ( "else" block )?
- *     whileStmt   -> "while" "(" cond ")" block
- *     forStmt     -> "for" "(" forInit ";" cond ";" forUpdate ")" block
+ *     ifStmt      -> "if" "(" expr ")" block ( "else" block )?
+ *     whileStmt   -> "while" "(" expr ")" block
+ *     forStmt     -> "for" "(" forInit ";" expr ";" forUpdate ")" block
  *     forInit     -> (ID "=" expr)?
  *     forUpdate   -> (ID "=" expr)?
  *     breakStmt   -> "break" ";"
  *     continueStmt -> "continue" ";"
  *     block       -> "{" statement* "}"
  *     printStmt   -> "print" "(" expr ")" ";"
- *     cond        -> andCond ("||" andCond)*
- *     andCond     -> notCond ("&&" notCond)*
- *     notCond     -> "!" notCond | rel
- *     rel         -> expr relop expr
- *     relop       -> "<" | ">" | "<=" | ">=" | "==" | "!="
- *     expr        -> term (("+"|"-") term)*
- *     term        -> factor (("*"|"/") factor)*
+ *
+ * `expr` is a single unified precedence chain -- same idea as real C, where
+ * comparisons and logical combinations are just more operators over
+ * int-valued expressions, not a separate "condition" grammar bolted on top.
+ * That's also what makes `(...)` grouping work uniformly everywhere,
+ * including around whole conditions:
+ *
+ *     expr        -> andExpr ("||" andExpr)*
+ *     andExpr     -> relExpr ("&&" relExpr)*
+ *     relExpr     -> addExpr (relop addExpr)*
+ *     addExpr     -> mulExpr (("+"|"-") mulExpr)*
+ *     mulExpr     -> unary (("*"|"/") unary)*
+ *     unary       -> "!" unary | "-" unary | factor
  *     factor      -> ID | NUM | "(" expr ")"
+ *     relop       -> "<" | ">" | "<=" | ">=" | "==" | "!="
  *
  * GRAMMAR below is the same grammar rewritten in *pure* BNF (the `*`/`?`
  * repetition operators expanded into right-recursive rules with an explicit
@@ -42,9 +49,9 @@ typedef enum {
     NT_PROGRAM, NT_STATEMENT, NT_DECLSTMT, NT_ASSIGNSTMT, NT_IFSTMT,
     NT_ELSEPART, NT_WHILESTMT, NT_FORSTMT, NT_FORINIT, NT_FORUPDATE,
     NT_BREAKSTMT, NT_CONTINUESTMT, NT_BLOCK, NT_STMTLIST, NT_PRINTSTMT,
-    NT_COND, NT_ORCONDTAIL, NT_ANDCOND, NT_ANDCONDTAIL, NT_NOTCOND,
-    NT_REL, NT_RELOP,
-    NT_EXPR, NT_EXPRTAIL, NT_TERM, NT_TERMTAIL, NT_FACTOR,
+    NT_EXPR, NT_ORTAIL, NT_ANDEXPR, NT_ANDTAIL, NT_RELEXPR, NT_RELTAIL,
+    NT_ADDEXPR, NT_ADDTAIL, NT_MULEXPR, NT_MULTAIL, NT_UNARY, NT_FACTOR,
+    NT_RELOP,
     NT_COUNT
 } NonTerm;
 

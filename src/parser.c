@@ -244,13 +244,13 @@ static ParseNode *parse_break_stmt(Parser *p);
 static ParseNode *parse_continue_stmt(Parser *p);
 static ParseNode *parse_block(Parser *p);
 static ParseNode *parse_print_stmt(Parser *p);
-static ParseNode *parse_cond(Parser *p);
-static ParseNode *parse_and_cond(Parser *p);
-static ParseNode *parse_not_cond(Parser *p);
-static ParseNode *parse_rel(Parser *p);
-static ParseNode *parse_relop(Parser *p);
 static ParseNode *parse_expr(Parser *p);
-static ParseNode *parse_term(Parser *p);
+static ParseNode *parse_and_expr(Parser *p);
+static ParseNode *parse_rel_expr(Parser *p);
+static ParseNode *parse_relop(Parser *p);
+static ParseNode *parse_add_expr(Parser *p);
+static ParseNode *parse_mul_expr(Parser *p);
+static ParseNode *parse_unary(Parser *p);
 static ParseNode *parse_factor(Parser *p);
 
 /* -- statement* / stmtList (shared by program and block) ------------------- */
@@ -342,7 +342,7 @@ static ParseNode *parse_if_stmt(Parser *p)
     ParseNode *n = node(p, "ifStmt", 0);
     add(p, n, leaf(p, advance(p)));        /* "if" */
     add(p, n, expect(p, TT_LPAREN));
-    add(p, n, parse_cond(p));
+    add(p, n, parse_expr(p));
     add(p, n, expect(p, TT_RPAREN));
     add(p, n, parse_block(p));
     add(p, n, parse_else_part(p));
@@ -367,7 +367,7 @@ static ParseNode *parse_while_stmt(Parser *p)
     ParseNode *n = node(p, "whileStmt", 0);
     add(p, n, leaf(p, advance(p)));        /* "while" */
     add(p, n, expect(p, TT_LPAREN));
-    add(p, n, parse_cond(p));
+    add(p, n, parse_expr(p));
     add(p, n, expect(p, TT_RPAREN));
     add(p, n, parse_block(p));
     return n;
@@ -381,7 +381,7 @@ static ParseNode *parse_for_stmt(Parser *p)
     add(p, n, expect(p, TT_LPAREN));
     add(p, n, parse_for_init(p));
     add(p, n, expect(p, TT_SEMI));
-    add(p, n, parse_cond(p));
+    add(p, n, parse_expr(p));
     add(p, n, expect(p, TT_SEMI));
     add(p, n, parse_for_update(p));
     add(p, n, expect(p, TT_RPAREN));
@@ -455,55 +455,74 @@ static ParseNode *parse_print_stmt(Parser *p)
     return n;
 }
 
-/* -- cond -> andCond orCondTail   ("||"-chain, done iteratively like expr) */
-static ParseNode *parse_cond(Parser *p)
+/* expr is a single unified precedence chain, loosest to tightest:
+ * "||", "&&", relop, "+"/"-", "*"/"/" , unary "!"/"-", factor -- exactly
+ * like real C, where comparisons and logical combinations are just more
+ * operators over int-valued expressions, not a separate "condition"
+ * grammar. That's also what makes "(" ... ")" grouping work uniformly
+ * everywhere, including around a whole condition: factor's "(" expr ")"
+ * already accepts the full chain below, recursively.
+ *
+ * Every level here follows the same shape: parse the tighter level below,
+ * and if the level's own operator isn't there, return that result directly
+ * with no wrapper node (the same passthrough parse_statement uses to pick
+ * one of several alternatives) -- so a plain `x` stays a single `factor`
+ * leaf instead of six wrapper nodes deep. */
+
+/* -- expr -> andExpr orTail   ("||"-chain, done iteratively) */
+static ParseNode *parse_expr(Parser *p)
 {
-    ParseNode *left = parse_and_cond(p);
+    ParseNode *left = parse_and_expr(p);
     if (!check(p, TT_OR)) return left;     /* no "||": skip the wrapper node */
 
-    ParseNode *n = node(p, "cond", 0);
+    ParseNode *n = node(p, "expr", 0);
     add(p, n, left);
     while (check(p, TT_OR)) {
         add(p, n, leaf(p, advance(p)));
-        add(p, n, parse_and_cond(p));
+        add(p, n, parse_and_expr(p));
     }
     return n;
 }
 
-/* -- andCond -> notCond andCondTail   ("&&"-chain, done iteratively) */
-static ParseNode *parse_and_cond(Parser *p)
+/* -- andExpr -> relExpr andTail   ("&&"-chain, done iteratively) */
+static ParseNode *parse_and_expr(Parser *p)
 {
-    ParseNode *left = parse_not_cond(p);
+    ParseNode *left = parse_rel_expr(p);
     if (!check(p, TT_AND)) return left;    /* no "&&": skip the wrapper node */
 
-    ParseNode *n = node(p, "andCond", 0);
+    ParseNode *n = node(p, "andExpr", 0);
     add(p, n, left);
     while (check(p, TT_AND)) {
         add(p, n, leaf(p, advance(p)));
-        add(p, n, parse_not_cond(p));
+        add(p, n, parse_rel_expr(p));
     }
     return n;
 }
 
-/* -- notCond -> "!" notCond | rel */
-static ParseNode *parse_not_cond(Parser *p)
+static int at_relop(Parser *p)
 {
-    if (check(p, TT_NOT)) {
-        ParseNode *n = node(p, "notCond", 0);
-        add(p, n, leaf(p, advance(p)));
-        add(p, n, parse_not_cond(p));      /* right-recursive: "!!!x" chains */
-        return n;
+    switch (current(p)->type) {
+    case TT_LT: case TT_GT: case TT_LE:
+    case TT_GE: case TT_EQ: case TT_NE:
+        return 1;
+    default:
+        return 0;
     }
-    return parse_rel(p);
 }
 
-/* -- rel -> expr relop expr */
-static ParseNode *parse_rel(Parser *p)
+/* -- relExpr -> addExpr relTail   (relop-chain, done iteratively; real C
+ * allows chaining like "a < b < c" too, so this does) */
+static ParseNode *parse_rel_expr(Parser *p)
 {
-    ParseNode *n = node(p, "rel", 0);
-    add(p, n, parse_expr(p));
-    add(p, n, parse_relop(p));
-    add(p, n, parse_expr(p));
+    ParseNode *left = parse_add_expr(p);
+    if (!at_relop(p)) return left;         /* no relop: skip the wrapper node */
+
+    ParseNode *n = node(p, "relExpr", 0);
+    add(p, n, left);
+    while (at_relop(p)) {
+        add(p, n, parse_relop(p));
+        add(p, n, parse_add_expr(p));
+    }
     return n;
 }
 
@@ -523,28 +542,46 @@ static ParseNode *parse_relop(Parser *p)
     }
 }
 
-/* -- expr -> term exprTail   (exprTail right recursion done iteratively) */
-static ParseNode *parse_expr(Parser *p)
+/* -- addExpr -> mulExpr addTail   ("+"/"-"-chain, done iteratively) */
+static ParseNode *parse_add_expr(Parser *p)
 {
-    ParseNode *n = node(p, "expr", 0);
-    add(p, n, parse_term(p));
+    ParseNode *left = parse_mul_expr(p);
+    if (!check(p, TT_PLUS) && !check(p, TT_MINUS)) return left;
+
+    ParseNode *n = node(p, "addExpr", 0);
+    add(p, n, left);
     while (check(p, TT_PLUS) || check(p, TT_MINUS)) {
         add(p, n, leaf(p, advance(p)));
-        add(p, n, parse_term(p));
+        add(p, n, parse_mul_expr(p));
     }
     return n;
 }
 
-/* -- term -> factor termTail   (termTail right recursion done iteratively) */
-static ParseNode *parse_term(Parser *p)
+/* -- mulExpr -> unary mulTail   ("*"/"/"-chain, done iteratively) */
+static ParseNode *parse_mul_expr(Parser *p)
 {
-    ParseNode *n = node(p, "term", 0);
-    add(p, n, parse_factor(p));
+    ParseNode *left = parse_unary(p);
+    if (!check(p, TT_STAR) && !check(p, TT_SLASH)) return left;
+
+    ParseNode *n = node(p, "mulExpr", 0);
+    add(p, n, left);
     while (check(p, TT_STAR) || check(p, TT_SLASH)) {
         add(p, n, leaf(p, advance(p)));
-        add(p, n, parse_factor(p));
+        add(p, n, parse_unary(p));
     }
     return n;
+}
+
+/* -- unary -> "!" unary | "-" unary | factor */
+static ParseNode *parse_unary(Parser *p)
+{
+    if (check(p, TT_NOT) || check(p, TT_MINUS)) {
+        ParseNode *n = node(p, "unary", 0);
+        add(p, n, leaf(p, advance(p)));
+        add(p, n, parse_unary(p));          /* right-recursive: "!!x", "--x" chain */
+        return n;
+    }
+    return parse_factor(p);
 }
 
 /* -- factor -> ID | NUM | "(" expr ")" */

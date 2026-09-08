@@ -35,7 +35,7 @@ text directly.
 - **Algorithmic grammar analysis** — FIRST sets, FOLLOW sets, and the LL(1)
   parsing table are computed by generic fixed-point algorithms over bitsets,
   not hand-filled, and the construction proves the grammar is genuinely LL(1)
-  (117 conflict-free table entries)
+  (136 conflict-free table entries)
 - **Recursive-descent parser** — one function per grammar rule, with
   human-readable error messages instead of raw token dumps
 - **Two syntax-error recovery strategies** working together — phrase-level (a
@@ -49,7 +49,7 @@ text directly.
 - **A full-screen terminal UI in plain C** — no curses, no dependencies, just
   ANSI escape sequences; all the Windows/POSIX differences are confined to one
   small file ([src/term.c](src/term.c))
-- **40 automated tests** covering valid programs, syntax errors, edge cases,
+- **41 automated tests** covering valid programs, syntax errors, edge cases,
   `for`/`break`/`continue`, `&&`/`||`/`!` conditions, and the optional lexer
   (including a watchdog-guarded regression test for a panic-mode
   infinite-loop bug that was found and fixed during development)
@@ -68,7 +68,7 @@ BrechtSanders.WinLibs.POSIX.UCRT` installs one (gcc + `mingw32-make`); open a
 ```sh
 make          # build build/parsebench
 make run      # build and launch the terminal UI
-make test     # build and run the 40-test suite
+make test     # build and run the 41-test suite
 make grammar  # print the FIRST/FOLLOW sets and the LL(1) table
 make clean
 ```
@@ -102,34 +102,46 @@ statement   -> declStmt | assignStmt | ifStmt | whileStmt | forStmt
              | breakStmt | continueStmt | block | printStmt
 declStmt    -> "int" ID ";"
 assignStmt  -> ID "=" expr ";"
-ifStmt      -> "if" "(" cond ")" block ( "else" block )?
-whileStmt   -> "while" "(" cond ")" block
-forStmt     -> "for" "(" forInit ";" cond ";" forUpdate ")" block
+ifStmt      -> "if" "(" expr ")" block ( "else" block )?
+whileStmt   -> "while" "(" expr ")" block
+forStmt     -> "for" "(" forInit ";" expr ";" forUpdate ")" block
 forInit     -> (ID "=" expr)?
 forUpdate   -> (ID "=" expr)?
 breakStmt   -> "break" ";"
 continueStmt -> "continue" ";"
 block       -> "{" statement* "}"
 printStmt   -> "print" "(" expr ")" ";"
-cond        -> andCond ("||" andCond)*
-andCond     -> notCond ("&&" notCond)*
-notCond     -> "!" notCond | rel
-rel         -> expr relop expr
-relop       -> "<" | ">" | "<=" | ">=" | "==" | "!="
-expr        -> term (("+"|"-") term)*
-term        -> factor (("*"|"/") factor)*
+expr        -> andExpr ("||" andExpr)*
+andExpr     -> relExpr ("&&" relExpr)*
+relExpr     -> addExpr (relop addExpr)*
+addExpr     -> mulExpr (("+"|"-") mulExpr)*
+mulExpr     -> unary (("*"|"/") unary)*
+unary       -> "!" unary | "-" unary | factor
 factor      -> ID | NUM | "(" expr ")"
+relop       -> "<" | ">" | "<=" | ">=" | "==" | "!="
 ```
 
-`!` binds tighter than `&&`, which binds tighter than `||` — the usual
-precedence — so most conditions never need grouping. One thing this grammar
-deliberately does *not* support: parenthesizing a whole condition, e.g.
-`!(a < b)` or `(a < b) && (c < d)`. `rel`'s `expr relop expr` already claims
-`(` (via `factor -> "(" expr ")"`), so a `"(" cond ")"` alternative would be
-a second production starting with `(` — a FIRST/FIRST conflict, which would
-break the LL(1) proof. Write `!a < b` instead (no parens needed); to combine
-independently-parenthesized comparisons, just chain them with `&&`/`||`
-directly, e.g. `a < b && c < d`.
+`expr` is a single unified precedence chain — exactly like real C, where
+comparisons and logical combinations are just more operators over int-valued
+expressions, not a separate "condition" grammar bolted on top. Precedence
+loosest to tightest: `||`, `&&`, relop, `+`/`-`, `*`/`/`, unary `!`/`-`,
+then a name/number/parenthesized group. That single change is also what
+makes `(` ... `)` grouping work everywhere, including around a whole
+condition — `!(a < b)`, `(a < b) && (c < d)`, arbitrarily nested — since
+there's only one place `(` appears in the grammar (`factor`), and it already
+accepts the full chain recursively. An earlier version of this grammar kept
+"cond" and "expr" as two separate rules, which meant `factor`'s `"(" expr ")"`
+and a `"(" cond ")"` alternative would both start with `(` — a FIRST/FIRST
+conflict, and the reason parenthesized conditions used to be unsupported.
+Unifying the two rules removed the conflict entirely rather than working
+around it, so the grammar is still mechanically proven LL(1) (136
+conflict-free table entries) with no compromise.
+
+`if (x)`, `while (1)`, `x = a < b;`, `print(!x);` are all consequences of
+this and all valid now too — any `expr` is accepted wherever the grammar asks
+for one, same as real C, where a comparison is just another int-valued
+expression usable anywhere. See [examples/control_flow.tokens](examples/control_flow.tokens)
+for a worked example touching all of this.
 
 See [GRAMMAR.md](GRAMMAR.md) for the full reference: this EBNF form, the
 pure-BNF form the algorithms actually run on, the terminal/non-terminal lists,
@@ -217,7 +229,7 @@ and the computed FIRST/FOLLOW sets for every rule.
 |---|---|
 | **1 Analyze** | The token stream, the finished parse tree, and every recovered error |
 | **2 Walkthrough** | The same panes, replayed step by step as the parser built them |
-| **3 Grammar** | All 54 BNF productions, both FIRST and FOLLOW sets, and all 117 LL(1) table entries |
+| **3 Grammar** | All 57 BNF productions, both FIRST and FOLLOW sets, and all 136 LL(1) table entries |
 | **4 Input** | Load a built-in sample or open a token-stream file |
 
 | Key | Action |
@@ -276,7 +288,10 @@ The valid type names are the `TokenType` enum in [src/token.h](src/token.h):
 `INT IF ELSE WHILE PRINT FOR BREAK CONTINUE ID NUM ASSIGN PLUS MINUS STAR
 SLASH LT GT LE GE EQ NE AND OR NOT LPAREN RPAREN LBRACE RBRACE SEMI EOF`.
 
-See [examples/custom.tokens](examples/custom.tokens) for a complete file.
+See [examples/custom.tokens](examples/custom.tokens) for a complete file, or
+[examples/control_flow.tokens](examples/control_flow.tokens) for one that
+also exercises `for`/`break`/`continue`, `&&`/`||`/`!`, parenthesized
+conditions, and unary minus.
 
 ## Lexing source into a token stream
 
@@ -319,9 +334,10 @@ src/
 tests/
   minitest.h        a ~60-line test harness, so no framework is needed
   watchdog.h/.c     a wall-clock timeout for the infinite-loop regression test
-  test_main.c       all 40 tests
+  test_main.c       all 41 tests
 examples/
   custom.tokens     a sample token-stream file
+  control_flow.tokens  for/break/continue, &&/||/!, parens, unary minus
 Makefile
 ```
 
@@ -340,7 +356,7 @@ ok    test_if_else_has_no_errors
 ...
 ok    test_lexer_output_for_loop_with_break_and_and_parses_cleanly
 
-40 tests, 0 failed
+41 tests, 0 failed
 ```
 
 The suite covers six areas:
@@ -354,9 +370,9 @@ The suite covers six areas:
   LL(1) table's own conflict check
 - **Token-stream format** (6) — default lexemes, line-number tracking,
   comments, and both error cases
-- **`for`/`break`/`continue`, `&&`/`||`/`!`** (7) — loops with and without
+- **`for`/`break`/`continue`, `&&`/`||`/`!`** (8) — loops with and without
   init/update, nested break/continue, `&&`/`||` precedence and tree shape,
-  bare `!`, and the documented parenthesized-condition rejection
+  unary `!`/`-` precedence, and parenthesized condition grouping
 - **Lexer** (12) — token/line correctness, comments, two-character and
   logical operators, all error cases, and round trips through the text
   format into the parser

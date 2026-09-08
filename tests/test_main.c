@@ -440,12 +440,12 @@ TEST(test_and_condition_has_no_errors_and_correct_shape)
         "RBRACE\n", &ts);
 
     CHECK_INT(r.error_count, 0);
-    const ParseNode *cond = child(child(r.tree, 0), 2);  /* ifStmt's cond slot */
-    CHECK_STR(cond->label, "andCond");
+    const ParseNode *cond = child(child(r.tree, 0), 2);  /* ifStmt's expr slot */
+    CHECK_STR(cond->label, "andExpr");
     CHECK_INT(cond->child_count, 3);
-    CHECK_STR(child_label(cond, 0), "rel");
+    CHECK_STR(child_label(cond, 0), "relExpr");
     CHECK_STR(child_label(cond, 1), "&&");
-    CHECK_STR(child_label(cond, 2), "rel");
+    CHECK_STR(child_label(cond, 2), "relExpr");
 
     parse_result_free(&r);
     ts_free(&ts);
@@ -460,43 +460,80 @@ TEST(test_or_binds_looser_than_and_no_grouping_parens_needed)
 
     CHECK_INT(r.error_count, 0);
     const ParseNode *cond = child(child(r.tree, 0), 2);
-    CHECK_STR(cond->label, "cond");            /* top level: "||" was used */
-    CHECK_STR(child_label(cond, 0), "rel");    /* x < 1, no "&&" beside it */
+    CHECK_STR(cond->label, "expr");                 /* top level: "||" was used */
+    CHECK_STR(child_label(cond, 0), "relExpr");     /* x < 1, no "&&" beside it */
     CHECK_STR(child_label(cond, 1), "||");
-    CHECK_STR(child_label(cond, 2), "andCond"); /* y < 2 && z < 3 binds tighter */
+    CHECK_STR(child_label(cond, 2), "andExpr");     /* y < 2 && z < 3 binds tighter */
 
     parse_result_free(&r);
     ts_free(&ts);
 }
 
-TEST(test_bare_not_condition_has_no_errors)
+TEST(test_bare_not_binds_to_the_operand_not_the_whole_comparison)
 {
+    /* Unified precedence now matches real C: "!" is a unary operator at the
+     * tightest level (same as unary "-"), so "!x < 5" parses as "(!x) < 5",
+     * NOT "!(x < 5)". To negate a whole comparison, parenthesize it -- see
+     * test_parenthesized_condition_grouping_now_works below. */
     TokenStream ts;
     ParseResult r = parse_text(
         "IF LPAREN NOT ID(x) LT NUM(5) RPAREN LBRACE\nRBRACE\n", &ts);
 
     CHECK_INT(r.error_count, 0);
     const ParseNode *cond = child(child(r.tree, 0), 2);
-    CHECK_STR(cond->label, "notCond");
-    CHECK_STR(child_label(cond, 0), "!");
-    CHECK_STR(child_label(cond, 1), "rel");
+    CHECK_STR(cond->label, "relExpr");
+    CHECK_STR(child_label(cond, 0), "unary");
+    CHECK_STR(child_label(cond, 1), "relop");
+    const ParseNode *not_node = child(cond, 0);
+    CHECK_STR(child_label(not_node, 0), "!");
+    CHECK_STR(child_label(not_node, 1), "factor");
 
     parse_result_free(&r);
     ts_free(&ts);
 }
 
-TEST(test_parenthesized_condition_grouping_is_not_supported_but_recovers)
+TEST(test_parenthesized_condition_grouping_now_works)
 {
-    /* By design: rel's "expr relop expr" already claims "(" (via factor's
-     * "(" expr ")"), so adding "(" cond ")" as another alternative would be
-     * a FIRST/FIRST conflict and break the grammar's LL(1) proof. "!(x<3)"
-     * is therefore not in the language -- write "!x<3" instead. This test
-     * just confirms the rejection recovers instead of crashing. */
+    /* The old grammar kept "cond" separate from "expr", so factor's own
+     * "(" expr ")" and a hypothetical "(" cond ")" would have been two
+     * productions starting with "(" -- a FIRST/FIRST conflict. Unifying
+     * conditions and arithmetic into one precedence chain (expr -> andExpr
+     * -> relExpr -> addExpr -> mulExpr -> unary -> factor, same as real C)
+     * removes the conflict: there's only one "(", at the factor level, and
+     * it already accepts the full chain. So both of these now parse. */
+    TokenStream ts1, ts2;
+
+    ParseResult r1 = parse_text(
+        "IF LPAREN NOT LPAREN ID(x) LT NUM(3) RPAREN RPAREN LBRACE\nRBRACE\n", &ts1);
+    CHECK_INT(r1.error_count, 0);
+    const ParseNode *cond1 = child(child(r1.tree, 0), 2);
+    CHECK_STR(cond1->label, "unary");           /* "!" now applies to the whole (...) */
+    CHECK_STR(child_label(cond1, 0), "!");
+    CHECK_STR(child_label(cond1, 1), "factor");  /* "(" relExpr ")" */
+    parse_result_free(&r1);
+    ts_free(&ts1);
+
+    ParseResult r2 = parse_text(
+        "IF LPAREN LPAREN ID(x) LT NUM(1) RPAREN AND LPAREN ID(y) GT NUM(2) RPAREN "
+        "RPAREN LBRACE\nRBRACE\n", &ts2);
+    CHECK_INT(r2.error_count, 0);
+    const ParseNode *cond2 = child(child(r2.tree, 0), 2);
+    CHECK_STR(cond2->label, "andExpr");
+    CHECK_STR(child_label(cond2, 0), "factor");  /* "(" x < 1 ")" */
+    CHECK_STR(child_label(cond2, 1), "&&");
+    CHECK_STR(child_label(cond2, 2), "factor");  /* "(" y > 2 ")" */
+    parse_result_free(&r2);
+    ts_free(&ts2);
+}
+
+TEST(test_unary_minus_has_no_errors)
+{
     TokenStream ts;
     ParseResult r = parse_text(
-        "IF LPAREN NOT LPAREN ID(x) LT NUM(3) RPAREN RPAREN LBRACE\nRBRACE\n", &ts);
+        "ID(x) ASSIGN MINUS NUM(5) SEMI\n", &ts);
 
-    CHECK(r.error_count > 0);
+    CHECK_INT(r.error_count, 0);
+    CHECK_STR(child_label(r.tree, 0), "assignStmt");
 
     parse_result_free(&r);
     ts_free(&ts);
@@ -744,8 +781,9 @@ int main(void)
     RUN(test_break_and_continue_inside_nested_loops_have_no_errors);
     RUN(test_and_condition_has_no_errors_and_correct_shape);
     RUN(test_or_binds_looser_than_and_no_grouping_parens_needed);
-    RUN(test_bare_not_condition_has_no_errors);
-    RUN(test_parenthesized_condition_grouping_is_not_supported_but_recovers);
+    RUN(test_bare_not_binds_to_the_operand_not_the_whole_comparison);
+    RUN(test_parenthesized_condition_grouping_now_works);
+    RUN(test_unary_minus_has_no_errors);
 
     RUN(test_lexer_produces_expected_tokens_for_a_simple_program);
     RUN(test_lexer_tracks_source_line_numbers);

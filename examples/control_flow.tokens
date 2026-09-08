@@ -1,0 +1,27 @@
+# Example token stream showing the full grammar surface: for/break/continue,
+# &&/||/! conditions (including parenthesized grouping), and unary minus.
+# See examples/custom.tokens for the token-stream format itself.
+
+INT ID(i) SEMI                                                    # int i;
+INT ID(sum) SEMI                                                  # int sum;
+ID(sum) ASSIGN NUM(0) SEMI                                        # sum = 0;
+
+FOR LPAREN ID(i) ASSIGN NUM(0) SEMI ID(i) LT NUM(10)              # for (i = 0; i < 10
+    AND ID(sum) LT NUM(100) SEMI                                  #      && sum < 100;
+    ID(i) ASSIGN ID(i) PLUS NUM(1) RPAREN LBRACE                  #      i = i + 1) {
+    IF LPAREN ID(i) EQ NUM(5) RPAREN LBRACE                       #   if (i == 5) {
+        CONTINUE SEMI                                             #     continue;
+    RBRACE                                                        #   }
+    IF LPAREN LPAREN ID(sum) GT NUM(50) RPAREN                    #   if ((sum > 50)
+        OR LPAREN ID(i) EQ NUM(9) RPAREN RPAREN LBRACE            #       || (i == 9)) {
+        BREAK SEMI                                                #     break;
+    RBRACE                                                        #   }
+    ID(sum) ASSIGN ID(sum) PLUS ID(i) SEMI                        #   sum = sum + i;
+RBRACE                                                             # }
+
+IF LPAREN NOT LPAREN ID(sum) LT NUM(0) RPAREN RPAREN LBRACE       # if (!(sum < 0)) {
+    PRINT LPAREN ID(sum) RPAREN SEMI                              #   print(sum);
+RBRACE                                                             # }
+
+ID(i) ASSIGN MINUS NUM(3) SEMI                                    # i = -3;
+PRINT LPAREN ID(i) RPAREN SEMI                                    # print(i);
