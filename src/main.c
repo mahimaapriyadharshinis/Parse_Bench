@@ -9,14 +9,16 @@
  *   parsebench --cli --dot ...       also write parse_tree_<name>.dot
  *   parsebench --lex FILE [-o OUT]   convert C-like source into the token-stream format
  *   parsebench --lex --stdin         ...reading the source from stdin instead
+ *   parsebench --repl                paste C-like source in the terminal and run it, in a loop
  *   parsebench --grammar             print FIRST/FOLLOW sets and the LL(1) table
  *   parsebench --help
  *
  * See src/token.h for the token-stream text format, or examples/custom.tokens
- * for a full sample file. --lex is an optional convenience front-end
- * (src/lexer.c) that produces that format from real source text; the
- * analyzer itself still only ever consumes a token stream.
+ * for a full sample file. --lex and --repl are optional convenience
+ * front-ends (src/lexer.c) that produce that format from real source text;
+ * the analyzer itself still only ever consumes a token stream.
  */
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -43,6 +45,7 @@ static void usage(FILE *out)
         "  parsebench --cli --dot ...    also write parse_tree_<name>.dot\n"
         "  parsebench --lex FILE [-o OUT]  convert C-like source to the token-stream format\n"
         "  parsebench --lex --stdin      ...reading the source from stdin instead\n"
+        "  parsebench --repl             paste C-like source and run it, in a loop\n"
         "  parsebench --grammar          print FIRST/FOLLOW sets and the LL(1) table\n"
         "  parsebench --help\n"
         "\n"
@@ -287,6 +290,122 @@ static int lex_mode(int argc, char **argv)
     return 0;
 }
 
+/* -- repl mode ---------------------------------------------------------------
+ *
+ * A loop around --lex + the analyzer: paste C-like source straight into the
+ * terminal, an empty line runs it, and the parse tree/errors print right
+ * there -- no file to create or clean up between attempts. */
+
+static void buf_append(char **buf, size_t *len, size_t *cap, const char *s, size_t slen)
+{
+    if (*len + slen + 1 > *cap) {
+        size_t ncap = *cap ? *cap * 2 : 4096;
+        while (ncap < *len + slen + 1) ncap *= 2;
+        char *nb = (char *)realloc(*buf, ncap);
+        if (!nb) { fprintf(stderr, "out of memory\n"); exit(1); }
+        *buf = nb;
+        *cap = ncap;
+    }
+    memcpy(*buf + *len, s, slen);
+    *len += slen;
+    (*buf)[*len] = '\0';
+}
+
+static int is_blank_line(const char *s)
+{
+    for (; *s; s++) if (!isspace((unsigned char)*s)) return 0;
+    return 1;
+}
+
+static void trim_trailing_ws(char *s)
+{
+    size_t n = strlen(s);
+    while (n > 0 && isspace((unsigned char)s[n - 1])) s[--n] = '\0';
+}
+
+/* Read one pasted block: lines up to (and not including) the blank line that
+ * ends it, or up to EOF. Sets `*eof` if input ended without a blank line.
+ * Returns NULL (and leaves `*eof` meaningful) if the block was empty --
+ * either just blank lines, or "quit"/"exit" alone as the very first line. */
+static char *read_repl_block(int *eof, int *quit)
+{
+    char *buf = NULL;
+    size_t len = 0, cap = 0;
+    int got_any = 0;
+    char line[1024];
+
+    *eof = 0;
+    *quit = 0;
+
+    for (;;) {
+        if (!fgets(line, sizeof line, stdin)) { *eof = 1; break; }
+
+        if (!got_any) {
+            char trimmed[sizeof line];
+            snprintf(trimmed, sizeof trimmed, "%s", line);
+            trim_trailing_ws(trimmed);
+            if (strcmp(trimmed, "quit") == 0 || strcmp(trimmed, "exit") == 0) {
+                *quit = 1;
+                free(buf);
+                return NULL;
+            }
+        }
+
+        if (is_blank_line(line)) {
+            if (got_any) break;    /* blank line after real input: run it */
+            continue;              /* leading blank lines: keep waiting */
+        }
+
+        buf_append(&buf, &len, &cap, line, strlen(line));
+        got_any = 1;
+    }
+
+    if (!got_any) { free(buf); return NULL; }
+    return buf;
+}
+
+static int repl_mode(void)
+{
+    printf("Parse Bench REPL -- paste C-like source, then an empty line to run it.\n"
+           "Type 'quit' or 'exit' alone (or Ctrl-Z+Enter / Ctrl-D on an empty line)"
+           " to leave.\n\n");
+
+    for (;;) {
+        printf("code> ");
+        fflush(stdout);
+
+        int eof, quit;
+        char *src = read_repl_block(&eof, &quit);
+
+        if (src) {
+            TokenStream ts;
+            ts_init(&ts);
+            char err[512];
+            if (lex_source(src, &ts, err, sizeof err) != 0) {
+                printf("Lex error: %s\n\n", err);
+            } else {
+                ParseResult r = parse_tokens(ts.data, ts.count);
+                printf("-- Parse tree --\n");
+                pt_to_text(r.tree, stdout);
+                if (r.error_count > 0) {
+                    printf("\n-- %d syntax error%s detected (recovered) --\n",
+                           r.error_count, r.error_count == 1 ? "" : "s");
+                    for (int i = 0; i < r.error_count; i++) printf("  %s\n", r.errors[i]);
+                } else {
+                    printf("\n-- No syntax errors --\n");
+                }
+                printf("\n");
+                parse_result_free(&r);
+            }
+            ts_free(&ts);
+            free(src);
+        }
+
+        if (quit || eof) break;
+    }
+    return 0;
+}
+
 /* -- grammar dump ---------------------------------------------------------- */
 
 static void print_grammar_report(void)
@@ -354,6 +473,9 @@ int main(int argc, char **argv)
     }
     if (argc >= 2 && strcmp(argv[1], "--lex") == 0) {
         return lex_mode(argc - 2, argv + 2);
+    }
+    if (argc >= 2 && strcmp(argv[1], "--repl") == 0) {
+        return repl_mode();
     }
     if (argc >= 2 && argv[1][0] == '-') {
         fprintf(stderr, "unknown option '%s'\n\n", argv[1]);

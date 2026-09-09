@@ -255,6 +255,7 @@ parsebench --cli --stdin      read a token stream from stdin
 parsebench --cli --dot ...    also write parse_tree_<name>.dot
 parsebench --lex FILE [-o OUT]  convert C-like source into the token-stream format
 parsebench --lex --stdin      ...reading the source from stdin instead
+parsebench --repl             paste C-like source and run it, in a loop
 parsebench --grammar          print FIRST/FOLLOW sets and the LL(1) table
 parsebench --help
 ```
@@ -316,6 +317,19 @@ change what the analyzer itself consumes, and hand-written token-stream
 files work exactly as before. On an unrecognized character or an
 unterminated block comment, `--lex` reports the offending line and exits
 non-zero rather than guessing.
+
+Don't even want a file on disk? `--repl` skips it entirely:
+
+```sh
+build\parsebench.exe --repl
+```
+
+Paste (or type) a program, then press Enter on an empty line to run it —
+the parse tree and any errors print right there, and it loops back for the
+next one. Type `quit` or `exit` alone (or Ctrl-Z+Enter on Windows, Ctrl-D on
+Linux/macOS, on an empty line) to leave. Same lexer, same analyzer, same
+output as `--lex` + `--cli` — just no file to create or clean up between
+attempts.
 
 ## Project structure
 
