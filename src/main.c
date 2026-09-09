@@ -9,7 +9,7 @@
  *   parsebench --cli --dot ...       also write parse_tree_<name>.dot
  *   parsebench --lex FILE [-o OUT]   convert C-like source into the token-stream format
  *   parsebench --lex --stdin         ...reading the source from stdin instead
- *   parsebench --repl                paste C-like source in the terminal and run it, in a loop
+ *   parsebench --repl                paste C-like source and open it in the full UI, in a loop
  *   parsebench --grammar             print FIRST/FOLLOW sets and the LL(1) table
  *   parsebench --help
  *
@@ -45,7 +45,7 @@ static void usage(FILE *out)
         "  parsebench --cli --dot ...    also write parse_tree_<name>.dot\n"
         "  parsebench --lex FILE [-o OUT]  convert C-like source to the token-stream format\n"
         "  parsebench --lex --stdin      ...reading the source from stdin instead\n"
-        "  parsebench --repl             paste C-like source and run it, in a loop\n"
+        "  parsebench --repl             paste C-like source, opens the full UI, in a loop\n"
         "  parsebench --grammar          print FIRST/FOLLOW sets and the LL(1) table\n"
         "  parsebench --help\n"
         "\n"
@@ -292,9 +292,10 @@ static int lex_mode(int argc, char **argv)
 
 /* -- repl mode ---------------------------------------------------------------
  *
- * A loop around --lex + the analyzer: paste C-like source straight into the
- * terminal, an empty line runs it, and the parse tree/errors print right
- * there -- no file to create or clean up between attempts. */
+ * A loop around --lex + the interactive UI: paste C-like source straight
+ * into the terminal, an empty line lexes it and opens the result in the same
+ * full-screen, colored token stream / parse tree / errors UI as
+ * `parsebench FILE` -- no file to hand-manage between attempts. */
 
 static void buf_append(char **buf, size_t *len, size_t *cap, const char *s, size_t slen)
 {
@@ -364,9 +365,16 @@ static char *read_repl_block(int *eof, int *quit)
     return buf;
 }
 
+/* A scratch file the REPL overwrites on every paste, so each block opens in
+ * the same full-screen UI everything else uses (colored token stream, parse
+ * tree, errors, walkthrough) instead of a plain-text dump. Removed on exit. */
+#define REPL_SCRATCH_PATH ".parsebench_repl.tokens"
+
 static int repl_mode(void)
 {
-    printf("Parse Bench REPL -- paste C-like source, then an empty line to run it.\n"
+    printf("Parse Bench REPL -- paste C-like source, then an empty line to open it\n"
+           "in the full terminal UI (same colored token stream / parse tree / errors\n"
+           "panes as `parsebench FILE`). Press q to close it and come back here.\n"
            "Type 'quit' or 'exit' alone (or Ctrl-Z+Enter / Ctrl-D on an empty line)"
            " to leave.\n\n");
 
@@ -384,18 +392,14 @@ static int repl_mode(void)
             if (lex_source(src, &ts, err, sizeof err) != 0) {
                 printf("Lex error: %s\n\n", err);
             } else {
-                ParseResult r = parse_tokens(ts.data, ts.count);
-                printf("-- Parse tree --\n");
-                pt_to_text(r.tree, stdout);
-                if (r.error_count > 0) {
-                    printf("\n-- %d syntax error%s detected (recovered) --\n",
-                           r.error_count, r.error_count == 1 ? "" : "s");
-                    for (int i = 0; i < r.error_count; i++) printf("  %s\n", r.errors[i]);
+                FILE *out = fopen(REPL_SCRATCH_PATH, "wb");
+                if (!out) {
+                    fprintf(stderr, "Cannot write '%s'\n\n", REPL_SCRATCH_PATH);
                 } else {
-                    printf("\n-- No syntax errors --\n");
+                    ts_write_text(&ts, out);
+                    fclose(out);
+                    tui_run(REPL_SCRATCH_PATH);   /* blocks until 'q' / Esc */
                 }
-                printf("\n");
-                parse_result_free(&r);
             }
             ts_free(&ts);
             free(src);
@@ -403,6 +407,7 @@ static int repl_mode(void)
 
         if (quit || eof) break;
     }
+    remove(REPL_SCRATCH_PATH);
     return 0;
 }
 
